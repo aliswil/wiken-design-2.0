@@ -1,11 +1,11 @@
-import { getGalleryItems } from '@/lib/sanity.queries';
+import { getGalleryItems, GalleryItem } from '@/lib/sanity.queries';
 import GalleryGrid from '@/components/GalleryGrid';
 
 export const revalidate = 0; // Don't cache during development
 
 export default async function AvistegningarPage() {
-  let items = [];
-  let error = null;
+  let items: GalleryItem[] = [];
+  let error: string | null = null;
 
   try {
     items = await getGalleryItems('avisteikningar');
