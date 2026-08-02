@@ -2,7 +2,7 @@ import { client } from './sanity.client';
 
 export interface GalleryItem {
   _id: string;
-  title: string;
+  title?: string;
   name?: string;
   category: 'avisteikningar' | 'maleriar' | 'barnebokar';
   drawing: {

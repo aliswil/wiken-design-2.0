@@ -18,7 +18,30 @@ export default defineConfig({
   projectId,
   dataset,
   // Add and edit the content schema in the './sanity/schemaTypes' folder
-  schema,
+  schema: {
+    ...schema,
+    templates: (templates) => [
+      ...templates.filter((template) => template.schemaType !== 'gallery'),
+      {
+        id: 'gallery-avisteikningar',
+        title: 'Ny avisteikning',
+        schemaType: 'gallery',
+        value: {category: 'avisteikningar'},
+      },
+      {
+        id: 'gallery-maleriar',
+        title: 'Nytt måleri',
+        schemaType: 'gallery',
+        value: {category: 'maleriar'},
+      },
+      {
+        id: 'gallery-barnebokar',
+        title: 'Nytt barnebokbilete',
+        schemaType: 'gallery',
+        value: {category: 'barnebokar'},
+      },
+    ],
+  },
   plugins: [
     structureTool({structure}),
     // Vision is for querying with GROQ from inside the Studio

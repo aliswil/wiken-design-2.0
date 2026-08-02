@@ -2,23 +2,17 @@ import { defineField, defineType } from 'sanity'
 
 export default defineType({
   name: 'gallery',
-  title: 'Gallery',
+  title: 'Galleri',
   type: 'document',
   fields: [
     defineField({
       name: 'title',
-      title: 'Title',
-      type: 'string',
-      validation: (Rule) => Rule.required(),
-    }),
-    defineField({
-      name: 'name',
-      title: 'Name',
+      title: 'Namn (valfritt)',
       type: 'string',
     }),
     defineField({
       name: 'category',
-      title: 'Category',
+      title: 'Kategori',
       type: 'string',
       options: {
         list: [
@@ -31,7 +25,7 @@ export default defineType({
     }),
     defineField({
       name: 'drawing',
-      title: 'Drawing/Image',
+      title: 'Bilete',
       type: 'image',
       options: {
         hotspot: true,
@@ -40,28 +34,29 @@ export default defineType({
     }),
     defineField({
       name: 'description',
-      title: 'Description',
+      title: 'Beskriving (valfritt)',
       type: 'text',
     }),
     defineField({
       name: 'order',
-      title: 'Display Order',
+      title: 'Rekkefølgje (valfritt)',
       type: 'number',
-      description: 'Lower numbers appear first',
+      description: 'Lågare tal blir viste først',
     }),
   ],
   preview: {
     select: {
       title: 'title',
+      legacyName: 'name',
       media: 'drawing',
       category: 'category',
     },
     prepare(selection) {
-      const { title, media, category } = selection
+      const {title, legacyName, media, category} = selection
       return {
-        title: title,
+        title: title || legacyName || 'Utan namn',
         subtitle: category,
-        media: media,
+        media,
       }
     },
   },

@@ -62,7 +62,11 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
             const height = item.drawing.asset.metadata?.dimensions.height || 600;
             const orientation = getImageOrientation(width, height);
             const size = getImageSize(item._id, orientation);
-            const textPosition = getTextPosition(item._id, orientation);
+            const displayName = item.title || item.name;
+            const altText = displayName || (item.category === 'maleriar' ? 'Måleri' : 'Illustrasjon');
+            const textPosition = displayName || item.description
+              ? getTextPosition(item._id, orientation)
+              : 'none';
             const verticalOffset = getVerticalOffset(item._id);
             
             // Bestem kolonne-span basert på størrelse
@@ -77,13 +81,27 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                   marginTop: `${verticalOffset}px`,
                 }}
               >
+                {textPosition === 'none' && (
+                  <div className="relative transition-transform hover:scale-[1.02] duration-300">
+                    <Image
+                      src={urlFor(item.drawing).url()}
+                      alt={altText}
+                      width={width}
+                      height={height}
+                      className="w-full h-auto"
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 800px"
+                      quality={95}
+                    />
+                  </div>
+                )}
+
                 {/* Right-bottom position */}
                 {textPosition === 'right-bottom' && (
                   <div className="flex items-end gap-1">
                     <div className="relative flex-1 transition-transform hover:scale-[1.02] duration-300">
                       <Image
                         src={urlFor(item.drawing).url()}
-                        alt={item.title}
+                        alt={altText}
                         width={width}
                         height={height}
                         className="w-full h-auto"
@@ -93,9 +111,11 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     </div>
                     <div className="flex flex-col items-start self-end">
                       <div style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>
-                        <h2 className="text-sm font-light text-gray-700 tracking-wide whitespace-nowrap">
-                          {item.title}
-                        </h2>
+                        {displayName && (
+                          <h2 className="text-sm font-light text-gray-700 tracking-wide whitespace-nowrap">
+                            {displayName}
+                          </h2>
+                        )}
                         {item.description && (
                           <p className="text-xs font-light text-gray-500 mt-4 tracking-wide whitespace-nowrap">
                             {item.description}
@@ -112,7 +132,7 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     <div className="relative flex-1 transition-transform hover:scale-[1.02] duration-300">
                       <Image
                         src={urlFor(item.drawing).url()}
-                        alt={item.title}
+                        alt={altText}
                         width={width}
                         height={height}
                         className="w-full h-auto"
@@ -122,9 +142,11 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     </div>
                     <div className="flex flex-col items-start self-start">
                       <div style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>
-                        <h2 className="text-sm font-light text-gray-700 tracking-wide whitespace-nowrap">
-                          {item.title}
-                        </h2>
+                        {displayName && (
+                          <h2 className="text-sm font-light text-gray-700 tracking-wide whitespace-nowrap">
+                            {displayName}
+                          </h2>
+                        )}
                         {item.description && (
                           <p className="text-xs font-light text-gray-500 mt-4 tracking-wide whitespace-nowrap">
                             {item.description}
@@ -139,9 +161,11 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                 {textPosition === 'top-left' && (
                   <div className="flex flex-col gap-1">
                     <div>
-                      <h2 className="text-sm font-light text-gray-700 tracking-wide">
-                        {item.title}
-                      </h2>
+                      {displayName && (
+                        <h2 className="text-sm font-light text-gray-700 tracking-wide">
+                          {displayName}
+                        </h2>
+                      )}
                       {item.description && (
                         <p className="text-xs font-light text-gray-500 mt-1 tracking-wide">
                           {item.description}
@@ -151,7 +175,7 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     <div className="relative transition-transform hover:scale-[1.02] duration-300">
                       <Image
                         src={urlFor(item.drawing).url()}
-                        alt={item.title}
+                        alt={altText}
                         width={width}
                         height={height}
                         className="w-full h-auto"
@@ -168,7 +192,7 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     <div className="relative transition-transform hover:scale-[1.02] duration-300">
                       <Image
                         src={urlFor(item.drawing).url()}
-                        alt={item.title}
+                        alt={altText}
                         width={width}
                         height={height}
                         className="w-full h-auto"
@@ -177,9 +201,11 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                       />
                     </div>
                     <div>
-                      <h2 className="text-sm font-light text-gray-700 tracking-wide">
-                        {item.title}
-                      </h2>
+                      {displayName && (
+                        <h2 className="text-sm font-light text-gray-700 tracking-wide">
+                          {displayName}
+                        </h2>
+                      )}
                       {item.description && (
                         <p className="text-xs font-light text-gray-500 mt-1 tracking-wide">
                           {item.description}
@@ -199,16 +225,34 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
             const width = item.drawing.asset.metadata?.dimensions.width || 800;
             const height = item.drawing.asset.metadata?.dimensions.height || 600;
             const orientation = getImageOrientation(width, height);
-            const textPosition = getTextPosition(item._id, orientation);
+            const displayName = item.title || item.name;
+            const altText = displayName || (item.category === 'maleriar' ? 'Måleri' : 'Illustrasjon');
+            const textPosition = displayName || item.description
+              ? getTextPosition(item._id, orientation)
+              : 'none';
             
             return (
               <div key={item._id} className="relative">
+                {textPosition === 'none' && (
+                  <div className="relative">
+                    <Image
+                      src={urlFor(item.drawing).url()}
+                      alt={altText}
+                      width={width}
+                      height={height}
+                      className="w-full h-auto"
+                      sizes="100vw"
+                      quality={95}
+                    />
+                  </div>
+                )}
+
                 {textPosition === 'right-bottom' && (
                   <div className="flex items-end gap-1">
                     <div className="relative flex-1">
                       <Image
                         src={urlFor(item.drawing).url()}
-                        alt={item.title}
+                        alt={altText}
                         width={width}
                         height={height}
                         className="w-full h-auto"
@@ -218,9 +262,11 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     </div>
                     <div className="flex flex-col items-start self-end">
                       <div style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>
-                        <h2 className="text-xs font-light text-gray-700 tracking-wide whitespace-nowrap">
-                          {item.title}
-                        </h2>
+                        {displayName && (
+                          <h2 className="text-xs font-light text-gray-700 tracking-wide whitespace-nowrap">
+                            {displayName}
+                          </h2>
+                        )}
                         {item.description && (
                           <p className="text-[10px] font-light text-gray-500 mt-3 tracking-wide whitespace-nowrap">
                             {item.description}
@@ -236,7 +282,7 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     <div className="relative flex-1">
                       <Image
                         src={urlFor(item.drawing).url()}
-                        alt={item.title}
+                        alt={altText}
                         width={width}
                         height={height}
                         className="w-full h-auto"
@@ -246,9 +292,11 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     </div>
                     <div className="flex flex-col items-start self-start">
                       <div style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>
-                        <h2 className="text-xs font-light text-gray-700 tracking-wide whitespace-nowrap">
-                          {item.title}
-                        </h2>
+                        {displayName && (
+                          <h2 className="text-xs font-light text-gray-700 tracking-wide whitespace-nowrap">
+                            {displayName}
+                          </h2>
+                        )}
                         {item.description && (
                           <p className="text-[10px] font-light text-gray-500 mt-3 tracking-wide whitespace-nowrap">
                             {item.description}
@@ -262,9 +310,11 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                 {textPosition === 'top-left' && (
                   <div className="flex flex-col gap-1">
                     <div>
-                      <h2 className="text-xs font-light text-gray-700 tracking-wide">
-                        {item.title}
-                      </h2>
+                      {displayName && (
+                        <h2 className="text-xs font-light text-gray-700 tracking-wide">
+                          {displayName}
+                        </h2>
+                      )}
                       {item.description && (
                         <p className="text-[10px] font-light text-gray-500 mt-1 tracking-wide">
                           {item.description}
@@ -274,7 +324,7 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     <div className="relative">
                       <Image
                         src={urlFor(item.drawing).url()}
-                        alt={item.title}
+                        alt={altText}
                         width={width}
                         height={height}
                         className="w-full h-auto"
@@ -290,7 +340,7 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                     <div className="relative">
                       <Image
                         src={urlFor(item.drawing).url()}
-                        alt={item.title}
+                        alt={altText}
                         width={width}
                         height={height}
                         className="w-full h-auto"
@@ -299,9 +349,11 @@ export default function GalleryGrid({ items }: GalleryGridProps) {
                       />
                     </div>
                     <div>
-                      <h2 className="text-xs font-light text-gray-700 tracking-wide">
-                        {item.title}
-                      </h2>
+                      {displayName && (
+                        <h2 className="text-xs font-light text-gray-700 tracking-wide">
+                          {displayName}
+                        </h2>
+                      )}
                       {item.description && (
                         <p className="text-[10px] font-light text-gray-500 mt-1 tracking-wide">
                           {item.description}
