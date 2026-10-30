@@ -16,14 +16,13 @@ import {
   type ShaderMaterial,
 } from 'three';
 import type { Painting, ScreenRect } from '../types';
-import { Boat, EYE_HEIGHT, WALL_MARGIN, yawTowards } from './boat';
-import { Canal } from './canal';
+import { Boat, EYE_HEIGHT, yawTowards, type Facing } from './boat';
 import { hexToRgb } from './colors';
+import { FloorPlan, WALL_MARGIN, type Point } from './floorPlan';
 import { MAX_RIPPLES } from './shaders';
 import { createToneTexture, PaintingTextures } from './textures';
 import {
   buildFrames,
-  buildReeds,
   buildShadows,
   buildWalls,
   buildWater,
@@ -118,11 +117,11 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     uEdge: { value: 1 },
   };
 
-  const canal = new Canal(paintings.length);
-  const hung = hangPaintings(canal, paintings, shared, createToneTexture);
-  const water = buildWater(canal, shared, reflectionTarget.texture) as Mesh<never, ShaderMaterial>;
+  const plan = new FloorPlan(paintings.length);
+  const hung = hangPaintings(plan, paintings, shared, createToneTexture);
+  const water = buildWater(plan, shared, reflectionTarget.texture) as Mesh<never, ShaderMaterial>;
   const shadows = buildShadows(hung);
-  scene.add(buildWalls(canal, hung, shared), buildFrames(hung, shared), buildReeds(canal, hung, shared), shadows, water);
+  scene.add(buildWalls(plan, hung, shared), buildFrames(hung, shared), shadows, water);
   hung.forEach((item) => scene.add(item.mesh));
   const paintingMeshes = hung.map((item) => item.mesh);
 
@@ -152,46 +151,42 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
   const projection = new Matrix4();
   const cameraPosition = new Vector3();
 
-  function viewingPose(item: HungPainting) {
-    const frame = canal.at(item.s);
+  function viewingPose(item: HungPainting): Point & Facing {
+    const room = plan.rooms[item.room];
     const halfVertical = (camera.fov * Math.PI) / 360;
     const halfHorizontal = Math.atan(Math.tan(halfVertical) * camera.aspect);
     const fitHeight = item.height / (0.46 * 2 * Math.tan(halfVertical));
     const fitWidth = item.width / (0.78 * 2 * Math.tan(halfHorizontal));
-    const distance = Math.min(frame.width - WALL_MARGIN, Math.max(1.8, fitHeight, fitWidth));
-    const lateral = item.side * (frame.width / 2 - distance);
-    // Looks a little below the picture's centre, so its reflection stays in view.
-    const pitch = Math.atan2(item.center.y - EYE_HEIGHT, distance) - 0.16;
+    const available = (item.normal.x !== 0 ? room.x1 - room.x0 : room.z1 - room.z0) - WALL_MARGIN;
+    const distance = Math.min(available, Math.max(1.8, fitHeight, fitWidth));
+    const spot = plan.nearestClear(item.center.x + item.normal.x * distance, item.center.z + item.normal.z * distance);
     return {
-      s: item.s,
-      lateral,
+      ...spot,
       yaw: yawTowards(-item.normal.x, -item.normal.z),
-      pitch,
+      // Looks a little below the picture's centre, so its reflection stays in view.
+      pitch: Math.atan2(item.center.y - EYE_HEIGHT, distance) - 0.16,
     };
   }
 
-  /**
-   * Looks down the water with the first painting beside the bend ahead.
-   * A narrow screen has no room for both, so there it looks at the painting.
-   */
-  function yawAlongWaterFrom(s: number, lateral: number) {
-    const frame = canal.at(s);
-    const x = frame.x + frame.nx * lateral;
-    const z = frame.z + frame.nz * lateral;
-    if (host.clientWidth < host.clientHeight) {
-      return yawTowards(hung[0].center.x - x, hung[0].center.z - z);
-    }
-    const towards = canal.at(s + 7.5);
-    return yawTowards(towards.x + towards.nx * 0.9 - x, towards.z + towards.nz * 0.9 - z);
+  /** The first view: across the first room with its painting ahead and the door to the next room in sight. */
+  function openingPose(distanceBack: number): Point & Facing {
+    const room = plan.rooms[0];
+    const first = hung[0];
+    const x = room.x0 + 1.6 - distanceBack * 0.25;
+    const z = room.z1 - 1.5 + distanceBack * 0.1;
+    const narrow = host.clientWidth < host.clientHeight;
+    const target = narrow
+      ? { x: first.center.x, z: first.center.z }
+      : { x: room.x1 - 0.8, z: room.z0 + (room.z1 - room.z0) * 0.32 };
+    return { ...plan.nearestClear(x, z), yaw: yawTowards(target.x - x, target.z - z), pitch: 0.05 };
   }
 
-  function startingPose() {
-    const s = hung[0].s - 6.6;
-    const lateral = -1.5;
-    return { s, d: lateral, yaw: yawAlongWaterFrom(s, lateral), pitch: 0.04 };
+  /** Glide along the water to a place, then turn the way `face` says. */
+  function sailTo(target: Point, face: Facing | null, smoothTime?: number) {
+    boat.follow(plan.route({ x: boat.x, z: boat.z }, target), face, smoothTime);
   }
 
-  const boat = new Boat(canal, startingPose());
+  const boat = new Boat(plan, openingPose(reducedMotion ? 0 : 1.6));
   const textures = new PaintingTextures(hung, renderer, touch, reducedMotion, requestFrame);
 
   function applyCameraPose() {
@@ -248,12 +243,13 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     let bestScore = Infinity;
     const lookX = -Math.sin(boat.yaw);
     const lookZ = -Math.cos(boat.yaw);
+    const room = plan.roomAt(boat.x, boat.z);
     hung.forEach((item, index) => {
       const dx = item.center.x - boat.x;
       const dz = item.center.z - boat.z;
       const distance = Math.hypot(dx, dz);
       const ahead = (dx * lookX + dz * lookZ) / (distance || 1);
-      const score = distance + (1 - ahead) * 14;
+      const score = distance + (1 - ahead) * 14 + (item.room === room ? 0 : 8);
       if (score < bestScore) {
         bestScore = score;
         best = index;
@@ -337,7 +333,8 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
 
     draw();
     needsFrame = false;
-    textures.update(cameraPosition, frustum, speed < 0.15, dt);
+    const room = plan.roomAt(boat.x, boat.z);
+    textures.update(cameraPosition, frustum, (item) => plan.areNeighbours(room, item.room), speed < 0.15, dt);
     reportCurrent();
     if (boat.speed > 0.02 || thrust !== 0 || turn !== 0) watchFrameRate(dt);
 
@@ -378,8 +375,8 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     const dx = x - boat.x;
     const dz = z - boat.z;
     const distance = Math.hypot(dx, dz);
-    for (let t = 0.6; t < distance - 0.5; t += 0.6) {
-      if (!canal.contains(boat.x + (dx / distance) * t, boat.z + (dz / distance) * t)) return false;
+    for (let t = 0.2; t < distance - 0.15; t += 0.2) {
+      if (!plan.contains(boat.x + (dx / distance) * t, boat.z + (dz / distance) * t)) return false;
     }
     return true;
   }
@@ -399,7 +396,7 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     const waterDistance = direction.y < -0.001 ? (-origin.y / direction.y) * flat : Infinity;
     let x = origin.x;
     let z = origin.z;
-    for (let t = 0.4; t < 45; t += 0.4) {
+    for (let t = 0.2; t < 45; t += 0.2) {
       if (t > waterDistance) {
         x = origin.x + dirX * waterDistance;
         z = origin.z + dirZ * waterDistance;
@@ -407,7 +404,7 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
       }
       const nextX = origin.x + dirX * t;
       const nextZ = origin.z + dirZ * t;
-      if (!canal.contains(nextX, nextZ)) break;
+      if (!plan.contains(nextX, nextZ)) break;
       x = nextX;
       z = nextZ;
     }
@@ -488,16 +485,12 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
       options.onOpen(index);
       return;
     }
-    const target = waterUnderRay();
+    const spot = waterUnderRay();
     noteFirstMove();
-    addRipple(target.x, target.z, 1);
-    if (reducedMotion) {
-      const location = canal.locate(target.x, target.z, true);
-      const limit = location.halfWidth - WALL_MARGIN;
-      boat.placeAt(location.s, Math.max(-limit, Math.min(limit, location.d)), boat.yaw, boat.pitch);
-    } else {
-      boat.seek(target.x, target.z);
-    }
+    addRipple(spot.x, spot.z, 1);
+    const target = plan.nearestClear(spot.x, spot.z);
+    if (reducedMotion) boat.placeAt(target.x, target.z, boat.yaw, boat.pitch);
+    else sailTo(target, null);
     requestFrame();
   }
 
@@ -586,9 +579,8 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
   applyCameraPose();
   canvas.style.cursor = 'grab';
   if (!reducedMotion) {
-    const s = hung[0].s - 5;
-    const lateral = -1.3;
-    boat.sailTo(s, lateral, yawAlongWaterFrom(s, lateral), 0.04, 2.2);
+    const settled = openingPose(0);
+    boat.follow([{ x: boat.x, z: boat.z }, settled], settled, 2.2);
   }
   requestFrame();
   options.onReady();
@@ -597,13 +589,13 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     sailTo(index) {
       const pose = viewingPose(hung[index]);
       noteFirstMove();
-      if (reducedMotion) boat.placeAt(pose.s, pose.lateral, pose.yaw, pose.pitch);
-      else boat.sailTo(pose.s, pose.lateral, pose.yaw, pose.pitch);
+      if (reducedMotion) boat.placeAt(pose.x, pose.z, pose.yaw, pose.pitch);
+      else sailTo(pose, pose);
       requestFrame();
     },
     placeAt(index) {
       const pose = viewingPose(hung[index]);
-      boat.placeAt(pose.s, pose.lateral, pose.yaw, pose.pitch);
+      boat.placeAt(pose.x, pose.z, pose.yaw, pose.pitch);
       agitation = 0;
       ripples.forEach((ripple) => ripple.setW(0));
       currentIndex = index;
@@ -672,7 +664,6 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
         mesh.geometry.dispose();
         (mesh.material as ShaderMaterial).dispose();
       });
-      (scene.children[0] as Mesh<never, ShaderMaterial>).material.uniforms.uTones.value.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
       canvas.remove();

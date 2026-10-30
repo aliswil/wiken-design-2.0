@@ -1,9 +1,10 @@
-import type { Canal } from './canal';
+import type { FloorPlan, Point } from './floorPlan';
 
 export const EYE_HEIGHT = 1.12;
-export const WALL_MARGIN = 1;
 const MIN_PITCH = -0.42;
 const MAX_PITCH = 0.62;
+const CORNER_RADIUS = 1.5;
+const CORNER_SAMPLES = 8;
 
 export interface BoatInput {
   /** -1 to 1: backwards to forwards. */
@@ -12,14 +13,21 @@ export interface BoatInput {
   turn: number;
 }
 
-interface Autopilot {
+export interface Facing {
+  yaw: number;
+  pitch: number;
+}
+
+interface Pilot {
+  xs: number[];
+  zs: number[];
+  /** Distance from the start of the path to each point. */
+  lengths: number[];
+  /** Metres left to go. */
   remaining: number;
-  lateral: number;
-  faceYaw: number;
-  facePitch: number;
   speed: number;
-  lateralSpeed: number;
   smoothTime: number;
+  face: Facing | null;
 }
 
 function wrapAngle(angle: number) {
@@ -42,6 +50,39 @@ function smoothDamp(current: number, target: number, speedOut: { value: number }
   return clampedTarget + (change + temp) * decay;
 }
 
+/** Turns waypoints into an even line, with corners rounded off so the boat swings through them. */
+function roundedPath(points: Point[]) {
+  const xs: number[] = [points[0].x];
+  const zs: number[] = [points[0].z];
+  for (let i = 1; i < points.length - 1; i++) {
+    const before = points[i - 1];
+    const corner = points[i];
+    const after = points[i + 1];
+    const inLength = Math.hypot(corner.x - before.x, corner.z - before.z) || 1;
+    const outLength = Math.hypot(after.x - corner.x, after.z - corner.z) || 1;
+    const radius = Math.min(CORNER_RADIUS, inLength * 0.45, outLength * 0.45);
+    const startX = corner.x + ((before.x - corner.x) / inLength) * radius;
+    const startZ = corner.z + ((before.z - corner.z) / inLength) * radius;
+    const endX = corner.x + ((after.x - corner.x) / outLength) * radius;
+    const endZ = corner.z + ((after.z - corner.z) / outLength) * radius;
+    for (let sample = 0; sample <= CORNER_SAMPLES; sample++) {
+      const t = sample / CORNER_SAMPLES;
+      const u = 1 - t;
+      xs.push(u * u * startX + 2 * u * t * corner.x + t * t * endX);
+      zs.push(u * u * startZ + 2 * u * t * corner.z + t * t * endZ);
+    }
+  }
+  const last = points[points.length - 1];
+  xs.push(last.x);
+  zs.push(last.z);
+
+  const lengths = [0];
+  for (let i = 1; i < xs.length; i++) {
+    lengths.push(lengths[i - 1] + Math.hypot(xs[i] - xs[i - 1], zs[i] - zs[i - 1]));
+  }
+  return { xs, zs, lengths };
+}
+
 /** The visitor's position on the water, with the inertia of something that floats. */
 export class Boat {
   x: number;
@@ -50,88 +91,60 @@ export class Boat {
   pitch: number;
   /** Metres per second over the last step. */
   speed = 0;
-  /** Heading the current drag left behind, in radians per second. */
+  /** Turning left behind by a drag, in radians per second. */
   yawDrift = 0;
   pitchDrift = 0;
 
   private vx = 0;
   private vz = 0;
-  private seekX: number | null = null;
-  private seekZ = 0;
-  private readonly seekVx = { value: 0 };
-  private readonly seekVz = { value: 0 };
-  private autopilot: Autopilot | null = null;
-  private s = 0;
-  private d = 0;
+  private pilot: Pilot | null = null;
 
   constructor(
-    private readonly canal: Canal,
-    start: { s: number; d: number; yaw: number; pitch: number },
+    private readonly plan: FloorPlan,
+    start: Point & Facing,
   ) {
-    const frame = canal.at(start.s);
-    this.x = frame.x + frame.nx * start.d;
-    this.z = frame.z + frame.nz * start.d;
+    this.x = start.x;
+    this.z = start.z;
     this.yaw = start.yaw;
     this.pitch = start.pitch;
-    const location = canal.locate(this.x, this.z, true);
-    canal.locate(this.x, this.z);
-    this.s = location.s;
-    this.d = location.d;
-  }
-
-  get position() {
-    return { s: this.s, d: this.d };
   }
 
   get moving() {
     return (
-      this.autopilot !== null ||
-      this.seekX !== null ||
+      this.pilot !== null ||
       this.speed > 0.01 ||
       Math.abs(this.yawDrift) > 0.003 ||
       Math.abs(this.pitchDrift) > 0.003
     );
   }
 
-  /** Glide along the water to a place, then turn to face the given direction. */
-  sailTo(s: number, lateral: number, faceYaw: number, facePitch: number, smoothTime = 1.05) {
+  /** Glide through waypoints. With a `face`, the boat ends up turned that way. */
+  follow(points: Point[], face: Facing | null, smoothTime = 1.05) {
+    const speed = this.speed;
     this.cancelSteering();
-    this.autopilot = {
-      remaining: this.canal.delta(this.s, s),
-      lateral,
-      faceYaw,
-      facePitch,
-      speed: 0,
-      lateralSpeed: 0,
+    const path = roundedPath(points);
+    this.pilot = {
+      ...path,
+      remaining: path.lengths[path.lengths.length - 1],
+      speed: -speed,
       smoothTime,
+      face,
     };
   }
 
   /** Be there at once, for reduced motion and while the dialog covers the room. */
-  placeAt(s: number, lateral: number, yaw: number, pitch: number) {
+  placeAt(x: number, z: number, yaw: number, pitch: number) {
     this.cancelSteering();
-    const frame = this.canal.at(s);
-    this.x = frame.x + frame.nx * lateral;
-    this.z = frame.z + frame.nz * lateral;
+    this.vx = 0;
+    this.vz = 0;
+    this.x = x;
+    this.z = z;
     this.yaw = yaw;
     this.pitch = pitch;
-    this.canal.locate(this.x, this.z, true);
-    const location = this.canal.locate(this.x, this.z);
-    this.s = s;
-    this.d = location.d;
-  }
-
-  /** Drift towards a point on the water. */
-  seek(x: number, z: number) {
-    this.cancelSteering();
-    this.seekX = x;
-    this.seekZ = z;
-    this.seekVx.value = this.vx;
-    this.seekVz.value = this.vz;
   }
 
   look(dYaw: number, dPitch: number) {
-    this.autopilot = null;
+    this.pilot = null;
     this.yaw = wrapAngle(this.yaw + dYaw);
     this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch + dPitch));
   }
@@ -143,8 +156,7 @@ export class Boat {
   }
 
   cancelSteering() {
-    this.autopilot = null;
-    this.seekX = null;
+    this.pilot = null;
     this.yawDrift = 0;
     this.pitchDrift = 0;
   }
@@ -153,13 +165,9 @@ export class Boat {
     const beforeX = this.x;
     const beforeZ = this.z;
 
-    if (input.thrust !== 0 || input.turn !== 0) {
-      this.autopilot = null;
-      this.seekX = null;
-    }
+    if (input.thrust !== 0 || input.turn !== 0) this.pilot = null;
 
-    if (this.autopilot) this.stepAutopilot(dt, this.autopilot);
-    else if (this.seekX !== null) this.stepSeek(dt);
+    if (this.pilot) this.stepPilot(dt, this.pilot);
     else this.stepFree(dt, input);
 
     if (this.yawDrift !== 0 || this.pitchDrift !== 0) {
@@ -177,9 +185,11 @@ export class Boat {
 
   private stepFree(dt: number, input: BoatInput) {
     this.yaw = wrapAngle(this.yaw + input.turn * 1.15 * dt);
+    const headingX = -Math.sin(this.yaw);
+    const headingZ = -Math.cos(this.yaw);
     if (input.thrust !== 0) {
-      this.vx += -Math.sin(this.yaw) * input.thrust * 3.4 * dt;
-      this.vz += -Math.cos(this.yaw) * input.thrust * 3.4 * dt;
+      this.vx += headingX * input.thrust * 3.4 * dt;
+      this.vz += headingZ * input.thrust * 3.4 * dt;
     }
     const damping = Math.exp(-dt * 1.35);
     this.vx *= damping;
@@ -187,89 +197,69 @@ export class Boat {
     if (Math.hypot(this.vx, this.vz) < 0.008) {
       this.vx = 0;
       this.vz = 0;
+      return;
     }
-    this.x += this.vx * dt;
-    this.z += this.vz * dt;
-    this.keepOffWalls(dt, input.thrust);
+
+    if (input.thrust > 0) {
+      const pull = this.plan.doorPull(this.x, this.z, headingX, headingZ);
+      this.vx += pull.x * 1.6 * dt;
+      this.vz += pull.z * 1.6 * dt;
+    }
+    this.slide(this.vx * dt, this.vz * dt);
   }
 
-  private stepSeek(dt: number) {
-    const targetX = this.seekX as number;
-    const targetZ = this.seekZ;
-    this.x = smoothDamp(this.x, targetX, this.seekVx, 0.95, dt, 3.2);
-    this.z = smoothDamp(this.z, targetZ, this.seekVz, 0.95, dt, 3.2);
-    this.vx = this.seekVx.value;
-    this.vz = this.seekVz.value;
-    const speed = Math.hypot(this.vx, this.vz);
-    if (speed > 0.2) {
-      const turn = wrapAngle(yawTowards(this.vx, this.vz) - this.yaw);
-      this.yaw = wrapAngle(this.yaw + turn * (1 - Math.exp(-dt * 0.9)) * Math.min(1, speed / 1.5));
-    }
-    this.keepOffWalls(dt, 0);
-    if (speed < 0.012 && Math.hypot(targetX - this.x, targetZ - this.z) < 0.03) {
-      this.seekX = null;
+  /** Moves as far as the walls allow, sliding along them rather than stopping dead. */
+  private slide(stepX: number, stepZ: number) {
+    const { plan } = this;
+    const nextX = this.x + stepX;
+    const nextZ = this.z + stepZ;
+    if (plan.isClear(nextX, nextZ)) {
+      this.x = nextX;
+      this.z = nextZ;
+    } else if (plan.isClear(nextX, this.z)) {
+      this.x = nextX;
+      this.vz = 0;
+    } else if (plan.isClear(this.x, nextZ)) {
+      this.z = nextZ;
+      this.vx = 0;
+    } else {
       this.vx = 0;
       this.vz = 0;
     }
   }
 
-  private stepAutopilot(dt: number, pilot: Autopilot) {
+  private stepPilot(dt: number, pilot: Pilot) {
     const speedOut = { value: pilot.speed };
-    const remaining = smoothDamp(pilot.remaining, 0, speedOut, pilot.smoothTime, dt, 3.6);
-    this.s = this.canal.wrap(this.s + (pilot.remaining - remaining));
-    pilot.remaining = remaining;
+    pilot.remaining = Math.max(0, smoothDamp(pilot.remaining, 0, speedOut, pilot.smoothTime, dt, 3.4));
     pilot.speed = speedOut.value;
 
-    const lateralOut = { value: pilot.lateralSpeed };
-    this.d = smoothDamp(this.d, pilot.lateral, lateralOut, pilot.smoothTime, dt, 2.4);
-    pilot.lateralSpeed = lateralOut.value;
+    const total = pilot.lengths[pilot.lengths.length - 1];
+    const travelled = total - pilot.remaining;
+    let index = 1;
+    while (index < pilot.lengths.length - 1 && pilot.lengths[index] < travelled) index++;
+    const span = pilot.lengths[index] - pilot.lengths[index - 1] || 1;
+    const t = Math.min(1, (travelled - pilot.lengths[index - 1]) / span);
+    const dirX = pilot.xs[index] - pilot.xs[index - 1];
+    const dirZ = pilot.zs[index] - pilot.zs[index - 1];
+    this.x = pilot.xs[index - 1] + dirX * t;
+    this.z = pilot.zs[index - 1] + dirZ * t;
 
-    const frame = this.canal.at(this.s);
-    this.x = frame.x + frame.nx * this.d;
-    this.z = frame.z + frame.nz * this.d;
-    this.canal.locate(this.x, this.z);
-
-    const direction = remaining > 0 ? 1 : -1;
-    const travelYaw = yawTowards(frame.tx * direction, frame.tz * direction);
-    const nearness = 1 - Math.min(1, Math.max(0, (Math.abs(remaining) - 1) / 3.2));
-    const blend = nearness * nearness * (3 - 2 * nearness);
-    const yawTarget = wrapAngle(travelYaw + wrapAngle(pilot.faceYaw - travelYaw) * blend);
-    this.yaw = wrapAngle(this.yaw + wrapAngle(yawTarget - this.yaw) * (1 - Math.exp(-dt * 2.6)));
-    this.pitch += (pilot.facePitch * blend + 0.08 * (1 - blend) - this.pitch) * (1 - Math.exp(-dt * 2.2));
-
-    const settled =
-      Math.abs(remaining) < 0.01 &&
-      Math.abs(pilot.speed) < 0.02 &&
-      Math.abs(wrapAngle(pilot.faceYaw - this.yaw)) < 0.004 &&
-      Math.abs(pilot.facePitch - this.pitch) < 0.004;
-    if (settled) this.autopilot = null;
-  }
-
-  /** Slides along walls rather than stopping dead, and eases the bow round when pushing against one. */
-  private keepOffWalls(dt: number, thrust: number) {
-    const location = this.canal.locate(this.x, this.z);
-    this.s = location.s;
-    this.d = location.d;
-    const limit = location.halfWidth - WALL_MARGIN;
-    if (Math.abs(location.d) <= limit) return;
-
-    const frame = this.canal.at(location.s);
-    const clamped = Math.sign(location.d) * limit;
-    this.x = frame.x + frame.nx * clamped;
-    this.z = frame.z + frame.nz * clamped;
-    this.d = clamped;
-
-    const into = this.vx * frame.nx + this.vz * frame.nz;
-    if (Math.sign(into) === Math.sign(location.d)) {
-      this.vx -= frame.nx * into;
-      this.vz -= frame.nz * into;
+    const travelYaw = dirX !== 0 || dirZ !== 0 ? yawTowards(dirX, dirZ) : this.yaw;
+    if (pilot.face) {
+      const nearness = 1 - Math.min(1, Math.max(0, (pilot.remaining - 0.8) / 3));
+      const blend = nearness * nearness * (3 - 2 * nearness);
+      const yawTarget = wrapAngle(travelYaw + wrapAngle(pilot.face.yaw - travelYaw) * blend);
+      this.yaw = wrapAngle(this.yaw + wrapAngle(yawTarget - this.yaw) * (1 - Math.exp(-dt * 2.6)));
+      this.pitch += (pilot.face.pitch * blend + 0.06 * (1 - blend) - this.pitch) * (1 - Math.exp(-dt * 2.2));
+    } else if (pilot.remaining > 0.4) {
+      const ease = (1 - Math.exp(-dt * 1.1)) * Math.min(1, Math.abs(pilot.speed) / 1.2);
+      this.yaw = wrapAngle(this.yaw + wrapAngle(travelYaw - this.yaw) * ease);
     }
 
-    if (thrust !== 0) {
-      const along = -Math.sin(this.yaw) * frame.tx + -Math.cos(this.yaw) * frame.tz;
-      const direction = along >= 0 ? 1 : -1;
-      const parallel = yawTowards(frame.tx * direction, frame.tz * direction);
-      this.yaw = wrapAngle(this.yaw + wrapAngle(parallel - this.yaw) * (1 - Math.exp(-dt * 1.5)));
-    }
+    const stopped = pilot.remaining < 0.008 && Math.abs(pilot.speed) < 0.02;
+    const turned =
+      !pilot.face ||
+      (Math.abs(wrapAngle(pilot.face.yaw - this.yaw)) < 0.004 && Math.abs(pilot.face.pitch - this.pitch) < 0.004);
+    if (stopped && turned) this.pilot = null;
   }
 }

@@ -10,7 +10,7 @@ export const revalidate = 60;
 export const metadata: Metadata = {
   title: 'Stille vatn – galleri | Wiken Design',
   description:
-    'Eit rom fylt med stille vatn. Gli rundt mellom veggene, sjå måleria spegle seg i vatnet, og trykk på eit bilete for å sjå det stort.',
+    'Rom fylte med stille vatn. Gli frå rom til rom, sjå måleria spegle seg i vatnet, og trykk på eit bilete for å sjå det stort.',
 };
 
 export default async function GalleriPage() {

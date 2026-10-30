@@ -83,8 +83,8 @@ export default function GalleryStage({ paintings, sceneRef, onOpen }: GallerySta
         <h1 className="mt-4 text-3xl font-light tracking-wide text-gray-900">Stille vatn</h1>
         <p className="mt-3 max-w-xl font-light text-gray-600">
           {support === 'none'
-            ? 'Dette galleriet er eigentleg eit rom fylt med stille vatn, men nettlesaren din kan ikkje vise det. Her heng alle måleria i staden.'
-            : 'Dette galleriet er eigentleg eit rom fylt med stille vatn. For å spare data og straum på denne eininga viser vi måleria som ei liste først.'}
+            ? 'Dette galleriet er eigentleg ei rekkje rom fylte med stille vatn, men nettlesaren din kan ikkje vise det. Her heng alle måleria i staden.'
+            : 'Dette galleriet er eigentleg ei rekkje rom fylte med stille vatn. For å spare data og straum på denne eininga viser vi måleria som ei liste først.'}
         </p>
         {support === 'weak' && (
           <button
@@ -131,7 +131,7 @@ export default function GalleryStage({ paintings, sceneRef, onOpen }: GallerySta
 
       {ready && !hasMoved && (
         <p className="pointer-events-none absolute inset-x-4 bottom-20 mx-auto w-fit max-w-md bg-background px-4 py-2 text-center text-sm font-light tracking-wide text-gray-700">
-          Trykk på vatnet for å gli dit. Dra for å sjå deg rundt. Trykk på eit måleri for å sjå det stort.
+          Trykk på vatnet for å gli dit, også inn i neste rom. Dra for å sjå deg rundt. Trykk på eit måleri for å sjå det stort.
           <span className="hidden md:inline"> Piltastane styrer òg.</span>
         </p>
       )}

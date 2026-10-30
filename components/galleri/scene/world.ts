@@ -3,14 +3,10 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
-  DataTexture,
   DoubleSide,
-  LinearFilter,
   Matrix4,
   Mesh,
   PlaneGeometry,
-  RepeatWrapping,
-  RGBAFormat,
   ShaderMaterial,
   Texture,
   type IUniform,
@@ -19,14 +15,12 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Painting } from '../types';
-import { Canal } from './canal';
 import { toWallPigment, type Rgb } from './colors';
+import { DOOR_HEIGHT, DOOR_WIDTH, FloorPlan } from './floorPlan';
 import {
   FRAME_FRAGMENT,
   MAX_RIPPLES,
   PAINTING_FRAGMENT,
-  REED_FRAGMENT,
-  REED_VERTEX,
   SHADOW_FRAGMENT,
   WALL_FRAGMENT,
   WALL_VERTEX,
@@ -34,15 +28,15 @@ import {
   WORLD_VERTEX,
 } from './shaders';
 
-const WALL_HEIGHT = 8;
+const WALL_TOP = 8;
 // Walls run on below the water so that a disturbed reflection never samples past their foot.
 const WALL_FOOT = -1.5;
-const WALL_SEGMENTS = 480;
 const HANG_HEIGHT = 0.62;
 const PAINTING_AREA = 4.3;
 const MAX_PAINTING_HEIGHT = 3.1;
 const MAX_PAINTING_WIDTH = 2.7;
 const FRAME_WIDTH = 0.035;
+const WALL_CLEARANCE = 0.06;
 const BARE_WALL: Rgb = [0.86, 0.87, 0.82];
 
 export type SharedUniforms = Record<'uPaper' | 'uResolution' | 'uEdge', IUniform>;
@@ -51,23 +45,12 @@ export interface HungPainting {
   painting: Painting;
   mesh: Mesh<PlaneGeometry, ShaderMaterial>;
   uniforms: { uFrom: IUniform<Texture>; uTo: IUniform<Texture>; uBlend: IUniform<number> };
-  s: number;
-  side: 1 | -1;
+  room: number;
   width: number;
   height: number;
   center: Vector3;
   /** Points out of the picture plane, towards the water. */
   normal: Vector3;
-}
-
-function seededRandom(seed: number) {
-  let state = seed;
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let t = Math.imul(state ^ (state >>> 15), 1 | state);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }
 
 function paintingSize(painting: Painting) {
@@ -85,52 +68,51 @@ function paintingSize(painting: Painting) {
   return { width, height };
 }
 
-/** How far a flat picture must stand off this stretch of curved wall to clear it. */
-function standOff(canal: Canal, s: number, side: 1 | -1, halfSpan: number) {
-  const center = canal.wallPoint(s, side);
-  const inwardX = -side * center.frame.nx;
-  const inwardZ = -side * center.frame.nz;
-  let furthest = 0;
-  for (let i = -6; i <= 6; i++) {
-    const point = canal.wallPoint(s + (i / 6) * halfSpan, side);
-    furthest = Math.max(furthest, (point.x - center.x) * inwardX + (point.z - center.z) * inwardZ);
-  }
-  return furthest;
-}
-
+/** Shares the paintings out in order, so the walk through the rooms follows the collection. */
 export function hangPaintings(
-  canal: Canal,
+  plan: FloorPlan,
   paintings: Painting[],
   shared: SharedUniforms,
   placeholder: (painting: Painting) => Texture,
 ): HungPainting[] {
-  const spacing = canal.length / paintings.length;
-  return paintings.map((painting, index) => {
-    const s = (index + 0.5) * spacing;
-    const side: 1 | -1 = index % 2 === 0 ? 1 : -1;
-    const { width, height } = paintingSize(painting);
-    const wall = canal.wallPoint(s, side);
-    const normal = new Vector3(-side * wall.frame.nx, 0, -side * wall.frame.nz);
-    const clearance = standOff(canal, s, side, width / 2 + 0.4) + 0.06;
-    const center = new Vector3(wall.x, HANG_HEIGHT + height / 2, wall.z).addScaledVector(normal, clearance);
+  const roomCount = plan.rooms.length;
+  const perRoom = Math.floor(paintings.length / roomCount);
+  const extra = paintings.length % roomCount;
+  const hung: HungPainting[] = [];
+  let next = 0;
 
-    const texture = placeholder(painting);
-    const uniforms = {
-      uFrom: { value: texture },
-      uTo: { value: texture },
-      uBlend: { value: 0 },
-    };
-    const material = new ShaderMaterial({
-      vertexShader: WORLD_VERTEX,
-      fragmentShader: PAINTING_FRAGMENT,
-      uniforms: { ...shared, ...uniforms },
-    });
-    const mesh = new Mesh(new PlaneGeometry(width, height), material);
-    mesh.position.copy(center);
-    mesh.rotation.y = Math.atan2(normal.x, normal.z);
-    mesh.updateMatrixWorld();
-    return { painting, mesh, uniforms, s, side, width, height, center, normal };
-  });
+  for (let room = 0; room < roomCount; room++) {
+    const count = perRoom + (room < extra ? 1 : 0);
+    const spots = plan.hangingSpots(room);
+    for (let i = 0; i < count; i++) {
+      const painting = paintings[next++];
+      const { wall, along } = spots[i % spots.length];
+      const { width, height } = paintingSize(painting);
+      const normal = new Vector3(wall.nx, 0, wall.nz);
+      const center = new Vector3(
+        wall.x + wall.dx * along + wall.nx * WALL_CLEARANCE,
+        HANG_HEIGHT + height / 2,
+        wall.z + wall.dz * along + wall.nz * WALL_CLEARANCE,
+      );
+      const texture = placeholder(painting);
+      const uniforms = {
+        uFrom: { value: texture },
+        uTo: { value: texture },
+        uBlend: { value: 0 },
+      };
+      const material = new ShaderMaterial({
+        vertexShader: WORLD_VERTEX,
+        fragmentShader: PAINTING_FRAGMENT,
+        uniforms: { ...shared, ...uniforms },
+      });
+      const mesh = new Mesh(new PlaneGeometry(width, height), material);
+      mesh.position.copy(center);
+      mesh.rotation.y = Math.atan2(normal.x, normal.z);
+      mesh.updateMatrixWorld();
+      hung.push({ painting, mesh, uniforms, room, width, height, center, normal });
+    }
+  }
+  return hung;
 }
 
 function placedOnWall(geometry: BufferGeometry, hung: HungPainting, back: number, drop = 0) {
@@ -140,12 +122,9 @@ function placedOnWall(geometry: BufferGeometry, hung: HungPainting, back: number
 }
 
 export function buildFrames(hung: HungPainting[], shared: SharedUniforms) {
-  const pieces = hung.map((item) => {
-    const box = new BoxGeometry(item.width + FRAME_WIDTH * 2, item.height + FRAME_WIDTH * 2, 0.05);
-    // Without its back face, a frame seen from behind round a bend does not show as a dark slab.
-    box.setIndex(Array.from(box.index?.array ?? []).slice(0, 30));
-    return placedOnWall(box, item, 0.027);
-  });
+  const pieces = hung.map((item) =>
+    placedOnWall(new BoxGeometry(item.width + FRAME_WIDTH * 2, item.height + FRAME_WIDTH * 2, 0.05), item, 0.027),
+  );
   const material = new ShaderMaterial({
     vertexShader: WORLD_VERTEX,
     fragmentShader: FRAME_FRAGMENT,
@@ -167,114 +146,143 @@ export function buildShadows(hung: HungPainting[]) {
   return new Mesh(mergeGeometries(pieces), material);
 }
 
-/** Each wall's colour along its length: bare plaster that takes on the pigment of nearby paintings. */
-function buildToneTexture(canal: Canal, hung: HungPainting[]) {
-  const columns = 256;
-  const data = new Uint8Array(columns * 2 * 4);
-  const sides: (1 | -1)[] = [1, -1];
-  sides.forEach((side, row) => {
-    const onWall = hung.filter((item) => item.side === side);
-    for (let column = 0; column < columns; column++) {
-      const s = (column / columns) * canal.length;
-      let weightSum = 0.22;
-      const mixed: Rgb = [BARE_WALL[0] * 0.22, BARE_WALL[1] * 0.22, BARE_WALL[2] * 0.22];
-      for (const item of onWall) {
-        const distance = canal.delta(s, item.s) / 3.4;
-        const weight = Math.exp(-distance * distance);
-        const pigment = toWallPigment(item.painting.palette[0]);
-        weightSum += weight;
-        mixed[0] += pigment[0] * weight;
-        mixed[1] += pigment[1] * weight;
-        mixed[2] += pigment[2] * weight;
-      }
-      const offset = (row * columns + column) * 4;
-      data[offset] = (mixed[0] / weightSum) * 255;
-      data[offset + 1] = (mixed[1] / weightSum) * 255;
-      data[offset + 2] = (mixed[2] / weightSum) * 255;
-      data[offset + 3] = 255;
-    }
-  });
-  const texture = new DataTexture(data, columns, 2, RGBAFormat);
-  texture.wrapS = RepeatWrapping;
-  texture.magFilter = LinearFilter;
-  texture.minFilter = LinearFilter;
-  texture.needsUpdate = true;
-  return texture;
+function mixRgb(a: Rgb, b: Rgb, amount: number): Rgb {
+  return [a[0] + (b[0] - a[0]) * amount, a[1] + (b[1] - a[1]) * amount, a[2] + (b[2] - a[2]) * amount];
 }
 
-export function buildWalls(canal: Canal, hung: HungPainting[], shared: SharedUniforms) {
-  const columns = WALL_SEGMENTS + 1;
-  const positions = new Float32Array(columns * 2 * 2 * 3);
-  const normals = new Float32Array(columns * 2 * 2 * 3);
-  const uvs = new Float32Array(columns * 2 * 2 * 2);
-  const sideValues = new Float32Array(columns * 2 * 2);
-  const indices: number[] = [];
-  let vertex = 0;
+/** Each room takes its colour from the paintings in it, so the rooms differ when seen through the doors. */
+function roomTones(plan: FloorPlan, hung: HungPainting[]) {
+  return plan.rooms.map((_, room) => {
+    const pigments = hung.filter((item) => item.room === room).map((item) => toWallPigment(item.painting.palette[0]));
+    if (pigments.length === 0) return BARE_WALL;
+    const sum = pigments.reduce<Rgb>((total, p) => [total[0] + p[0], total[1] + p[1], total[2] + p[2]], [0, 0, 0]);
+    return mixRgb(BARE_WALL, [sum[0] / pigments.length, sum[1] / pigments.length, sum[2] / pigments.length], 0.85);
+  });
+}
 
-  const sides: (1 | -1)[] = [1, -1];
-  sides.forEach((side, row) => {
-    const first = vertex;
-    for (let i = 0; i < columns; i++) {
-      const u = i / WALL_SEGMENTS;
-      const point = canal.wallPoint(u * canal.length, side);
-      for (let level = 0; level < 2; level++) {
-        positions.set([point.x, level === 0 ? WALL_FOOT : WALL_HEIGHT, point.z], vertex * 3);
-        normals.set([-side * point.frame.nx, 0, -side * point.frame.nz], vertex * 3);
-        uvs.set([u, level], vertex * 2);
-        sideValues[vertex] = row === 0 ? 0.25 : 0.75;
-        vertex++;
-      }
+class WallBuilder {
+  private readonly positions: number[] = [];
+  private readonly normals: number[] = [];
+  private readonly along: number[] = [];
+  private readonly tones: number[] = [];
+  private readonly indices: number[] = [];
+
+  /** One rectangle. `along` is [distance at a, distance at b, wall length, noise offset]. */
+  quad(
+    a: [number, number, number],
+    b: [number, number, number],
+    c: [number, number, number],
+    d: [number, number, number],
+    normal: [number, number, number],
+    along: [number, number, number, number],
+    tone: Rgb,
+  ) {
+    const first = this.positions.length / 3;
+    [a, b, c, d].forEach((corner, i) => {
+      this.positions.push(...corner);
+      this.normals.push(...normal);
+      this.along.push(i === 0 || i === 3 ? along[0] : along[1], along[2], along[3]);
+      this.tones.push(...tone);
+    });
+    this.indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
+  }
+
+  build() {
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(new Float32Array(this.positions), 3));
+    geometry.setAttribute('normal', new BufferAttribute(new Float32Array(this.normals), 3));
+    geometry.setAttribute('aAlong', new BufferAttribute(new Float32Array(this.along), 3));
+    geometry.setAttribute('aTone', new BufferAttribute(new Float32Array(this.tones), 3));
+    geometry.setIndex(this.indices);
+    return geometry;
+  }
+}
+
+export function buildWalls(plan: FloorPlan, hung: HungPainting[], shared: SharedUniforms) {
+  const tones = roomTones(plan, hung);
+  const builder = new WallBuilder();
+
+  plan.walls.forEach((wall, index) => {
+    const seed = index * 37.3;
+    const tone = tones[wall.room];
+    const normal: [number, number, number] = [wall.nx, 0, wall.nz];
+    const pointAt = (distance: number, y: number): [number, number, number] => [
+      wall.x + wall.dx * distance,
+      y,
+      wall.z + wall.dz * distance,
+    ];
+    const piece = (from: number, to: number, bottom: number) =>
+      builder.quad(
+        pointAt(from, bottom),
+        pointAt(to, bottom),
+        pointAt(to, WALL_TOP),
+        pointAt(from, WALL_TOP),
+        normal,
+        [from, to, wall.length, seed],
+        tone,
+      );
+
+    if (!wall.door) {
+      piece(0, wall.length, WALL_FOOT);
+      return;
     }
-    for (let i = 0; i < WALL_SEGMENTS; i++) {
-      const a = first + i * 2;
-      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
-    }
+    const [doorFrom, doorTo] = wall.door;
+    piece(0, doorFrom, WALL_FOOT);
+    piece(doorTo, wall.length, WALL_FOOT);
+    piece(doorFrom, doorTo, DOOR_HEIGHT);
   });
 
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(positions, 3));
-  geometry.setAttribute('normal', new BufferAttribute(normals, 3));
-  geometry.setAttribute('uv', new BufferAttribute(uvs, 2));
-  geometry.setAttribute('aSide', new BufferAttribute(sideValues, 1));
-  geometry.setIndex(indices);
+  plan.doors.forEach((door, index) => {
+    const seed = 700 + index * 11.7;
+    const tone = mixRgb(tones[door.rooms[0]], tones[door.rooms[1]], 0.5);
+    const reveal: Rgb = [tone[0] * 0.8, tone[1] * 0.8, tone[2] * 0.8];
+    const soffit: Rgb = [tone[0] * 0.62, tone[1] * 0.62, tone[2] * 0.62];
+    const depth = 0.25;
+    const half = DOOR_WIDTH / 2;
+    const place = (across: number, side: number, y: number): [number, number, number] =>
+      door.crossing === 'x'
+        ? [door.plane + across, y, door.center + side]
+        : [door.center + side, y, door.plane + across];
+    const faceSide = (sign: number): [number, number, number] =>
+      door.crossing === 'x' ? [0, 0, sign] : [sign, 0, 0];
+
+    for (const side of [-half, half]) {
+      builder.quad(
+        place(-depth, side, WALL_FOOT),
+        place(depth, side, WALL_FOOT),
+        place(depth, side, DOOR_HEIGHT),
+        place(-depth, side, DOOR_HEIGHT),
+        faceSide(-Math.sign(side)),
+        [2, 2.5, 5, seed + side],
+        reveal,
+      );
+    }
+    builder.quad(
+      place(-depth, -half, DOOR_HEIGHT),
+      place(depth, -half, DOOR_HEIGHT),
+      place(depth, half, DOOR_HEIGHT),
+      place(-depth, half, DOOR_HEIGHT),
+      [0, -1, 0],
+      [2, 2.5, 5, seed],
+      soffit,
+    );
+  });
 
   const material = new ShaderMaterial({
     vertexShader: WALL_VERTEX,
     fragmentShader: WALL_FRAGMENT,
     side: DoubleSide,
-    uniforms: {
-      ...shared,
-      uTones: { value: buildToneTexture(canal, hung) },
-      uLength: { value: canal.length },
-    },
+    uniforms: { ...shared },
   });
-  return new Mesh(geometry, material);
+  return new Mesh(builder.build(), material);
 }
 
-export function buildWater(canal: Canal, shared: SharedUniforms, reflection: Texture) {
-  const positions = new Float32Array((WALL_SEGMENTS + 1) * 2 * 3);
-  const uvs = new Float32Array((WALL_SEGMENTS + 1) * 2 * 2);
-  const indices: number[] = [];
-  for (let i = 0; i <= WALL_SEGMENTS; i++) {
-    const s = (i / WALL_SEGMENTS) * canal.length;
-    const outer = canal.wallPoint(s, 1);
-    const inner = canal.wallPoint(s, -1);
-    positions.set([outer.x, 0, outer.z, inner.x, 0, inner.z], i * 6);
-    uvs.set([i / WALL_SEGMENTS, 1, i / WALL_SEGMENTS, 0], i * 4);
-    if (i < WALL_SEGMENTS) {
-      const a = i * 2;
-      indices.push(a, a + 1, a + 2, a + 2, a + 1, a + 3);
-    }
-  }
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(positions, 3));
-  geometry.setAttribute('uv', new BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
-
+export function buildWater(plan: FloorPlan, shared: SharedUniforms, reflection: Texture) {
+  const { x0, x1, z0, z1 } = plan.bounds;
+  const geometry = new PlaneGeometry(x1 - x0, z1 - z0).rotateX(-Math.PI / 2).translate((x0 + x1) / 2, 0, (z0 + z1) / 2);
   const material = new ShaderMaterial({
     vertexShader: WORLD_VERTEX,
     fragmentShader: WATER_FRAGMENT,
-    side: DoubleSide,
     uniforms: {
       ...shared,
       uReflection: { value: reflection },
@@ -283,76 +291,6 @@ export function buildWater(canal: Canal, shared: SharedUniforms, reflection: Tex
       uRippleCount: { value: MAX_RIPPLES },
       uRipples: { value: Array.from({ length: MAX_RIPPLES }, () => new Vector4()) },
     },
-  });
-  return new Mesh(geometry, material);
-}
-
-const REED_COLORS: Rgb[] = [
-  [0.16, 0.3, 0.2],
-  [0.24, 0.4, 0.25],
-  [0.38, 0.47, 0.25],
-  [0.12, 0.25, 0.22],
-];
-
-/** Blades of reed along the waterline, drawn as tapered ribbons like the long strokes in the paintings. */
-export function buildReeds(canal: Canal, hung: HungPainting[], shared: SharedUniforms) {
-  const random = seededRandom(7);
-  const segments = 5;
-  const positions: number[] = [];
-  const colors: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-
-  const clumps = Math.round(canal.length / 1.7);
-  for (let clump = 0; clump < clumps; clump++) {
-    const s = (clump + random() * 0.8) * (canal.length / clumps);
-    const side: 1 | -1 = random() > 0.5 ? 1 : -1;
-    const blocksPainting = hung.some(
-      (item) => item.side === side && Math.abs(canal.delta(s, item.s)) < item.width / 2 + 0.25,
-    );
-    const blades = 4 + Math.floor(random() * 6);
-    for (let blade = 0; blade < blades; blade++) {
-      const along = s + (random() - 0.5) * 0.7;
-      const base = canal.wallPoint(along, side, 0.1 + random() * 0.45);
-      const tallest = blocksPainting ? 0.5 : 0.8 + random() * 0.8;
-      const height = tallest * (0.55 + random() * 0.45);
-      const width = 0.024 + random() * 0.03;
-      const leanX = base.frame.nx * -side * (0.05 + random() * 0.3) + base.frame.tx * (random() - 0.5) * 0.45;
-      const leanZ = base.frame.nz * -side * (0.05 + random() * 0.3) + base.frame.tz * (random() - 0.5) * 0.45;
-      const sideways = random() * Math.PI;
-      const sideX = Math.cos(sideways);
-      const sideZ = Math.sin(sideways);
-      const color = REED_COLORS[Math.floor(random() * REED_COLORS.length)];
-      const first = positions.length / 3;
-
-      for (let segment = 0; segment <= segments; segment++) {
-        const t = segment / segments;
-        const taper = width * Math.pow(1 - t, 0.7);
-        const x = base.x + leanX * height * t * t;
-        const y = height * t * (1 - 0.18 * t);
-        const z = base.z + leanZ * height * t * t;
-        positions.push(x - sideX * taper, y, z - sideZ * taper, x + sideX * taper, y, z + sideZ * taper);
-        colors.push(...color, ...color);
-        uvs.push(0, t, 1, t);
-        if (segment < segments) {
-          const a = first + segment * 2;
-          indices.push(a, a + 1, a + 2, a + 2, a + 1, a + 3);
-        }
-      }
-    }
-  }
-
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
-  geometry.setAttribute('aColor', new BufferAttribute(new Float32Array(colors), 3));
-  geometry.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
-  geometry.setIndex(indices);
-
-  const material = new ShaderMaterial({
-    vertexShader: REED_VERTEX,
-    fragmentShader: REED_FRAGMENT,
-    side: DoubleSide,
-    uniforms: { ...shared },
   });
   return new Mesh(geometry, material);
 }

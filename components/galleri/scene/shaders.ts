@@ -56,14 +56,15 @@ export const WORLD_VERTEX = /* glsl */ `
 `;
 
 export const WALL_VERTEX = /* glsl */ `
-  attribute float aSide;
+  attribute vec3 aAlong;
+  attribute vec3 aTone;
   varying vec3 vWorld;
-  varying vec2 vUv;
-  varying float vSide;
+  varying vec3 vAlong;
+  varying vec3 vTone;
   varying vec3 vNormal;
   void main() {
-    vUv = uv;
-    vSide = aSide;
+    vAlong = aAlong;
+    vTone = aTone;
     vNormal = normal;
     vec4 world = modelMatrix * vec4(position, 1.0);
     vWorld = world.xyz;
@@ -71,15 +72,13 @@ export const WALL_VERTEX = /* glsl */ `
   }
 `;
 
-/** The walls are one long wash, tinted by whichever painting hangs nearby. */
+/** Each wall is a limewash, tinted by the paintings in its room. */
 export const WALL_FRAGMENT = /* glsl */ `
   ${NOISE}
   ${ATMOSPHERE}
-  uniform sampler2D uTones;
-  uniform float uLength;
   varying vec3 vWorld;
-  varying vec2 vUv;
-  varying float vSide;
+  varying vec3 vAlong;
+  varying vec3 vTone;
   varying vec3 vNormal;
 
   // Limewash is brushed in crossing diagonals, so two directions of stroke take turns to show.
@@ -105,26 +104,24 @@ export const WALL_FRAGMENT = /* glsl */ `
   }
 
   void main() {
-    float along = vUv.x * uLength;
+    // Each wall starts somewhere else in the noise, so no two are brushed alike.
+    float along = vAlong.x + vAlong.z;
     float y = vWorld.y;
-    vec3 tone = texture2D(uTones, vec2(vUv.x, vSide)).rgb;
-
-    // The loop closes on itself, so the brushwork cross-fades over its last metres.
     vec3 brush = wash(along, y);
-    float seam = smoothstep(uLength - 4.0, uLength, along);
-    if (seam > 0.0) brush = mix(brush, wash(along - uLength, y), seam);
+    vec3 color = vTone * brush.x;
 
-    vec3 color = tone * brush.x;
     float damp = smoothstep(brush.y, 0.0, y);
     color = mix(color, color * vec3(0.52, 0.64, 0.56), damp * 0.72);
 
-    float light = 0.94 + 0.06 * dot(normalize(vNormal), normalize(vec3(0.5, 0.2, 0.7)));
-    color *= light;
+    // Directional light and darker corners make the room read as a box.
+    float light = 0.95 + 0.07 * dot(normalize(vNormal), normalize(vec3(0.62, 0.2, 0.76)));
+    float toCorner = min(vAlong.x, vAlong.y - vAlong.x);
+    color *= light * (0.84 + 0.16 * smoothstep(0.0, 1.3, toCorner));
 
-    color = mix(color, uPaper, smoothstep(2.9, 5.0, y + brush.z));
+    color = mix(color, uPaper, smoothstep(3.6, 5.8, y + brush.z));
 
     float distanceToCamera = length(cameraPosition - vWorld);
-    color = mist(color, distanceToCamera, 7.0, 0.04);
+    color = mist(color, distanceToCamera, 9.0, 0.03);
     gl_FragColor = vec4(paperBleed(color), 1.0);
   }
 `;
@@ -142,7 +139,7 @@ export const PAINTING_FRAGMENT = /* glsl */ `
   void main() {
     vec3 color = mix(texture2D(uFrom, vUv).rgb, texture2D(uTo, vUv).rgb, uBlend);
     float distanceToCamera = length(cameraPosition - vWorld);
-    color = mist(color, distanceToCamera, 11.0, 0.036);
+    color = mist(color, distanceToCamera, 13.0, 0.03);
     gl_FragColor = vec4(paperBleed(color), 1.0);
   }
 `;
@@ -157,7 +154,7 @@ export const FRAME_FRAGMENT = /* glsl */ `
   void main() {
     vec3 color = uColor * (0.92 + 0.16 * vnoise(vWorld.xz * 9.0 + vWorld.y * 30.0));
     float distanceToCamera = length(cameraPosition - vWorld);
-    color = mist(color, distanceToCamera, 11.0, 0.036);
+    color = mist(color, distanceToCamera, 13.0, 0.03);
     gl_FragColor = vec4(paperBleed(color), 1.0);
   }
 `;
@@ -170,36 +167,6 @@ export const SHADOW_FRAGMENT = /* glsl */ `
     float edge = smoothstep(1.0, 0.72, p.x) * smoothstep(1.0, 0.72, p.y);
     float fade = exp(-length(cameraPosition - vWorld) * 0.05);
     gl_FragColor = vec4(0.13, 0.15, 0.12, edge * 0.36 * fade);
-  }
-`;
-
-export const REED_VERTEX = /* glsl */ `
-  attribute vec3 aColor;
-  varying vec3 vWorld;
-  varying vec3 vColor;
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    vColor = aColor;
-    vec4 world = modelMatrix * vec4(position, 1.0);
-    vWorld = world.xyz;
-    gl_Position = projectionMatrix * viewMatrix * world;
-  }
-`;
-
-export const REED_FRAGMENT = /* glsl */ `
-  ${NOISE}
-  ${ATMOSPHERE}
-  varying vec3 vWorld;
-  varying vec3 vColor;
-  varying vec2 vUv;
-
-  void main() {
-    vec3 color = vColor * (0.72 + 0.5 * vUv.y);
-    color *= 0.92 + 0.16 * vnoise(vec2(vUv.y * 14.0, vUv.x * 2.0));
-    float distanceToCamera = length(cameraPosition - vWorld);
-    color = mist(color, distanceToCamera, 7.0, 0.04);
-    gl_FragColor = vec4(paperBleed(color), 1.0);
   }
 `;
 
@@ -285,7 +252,7 @@ export const WATER_FRAGMENT = /* glsl */ `
     color *= 1.0 + dabLight * (0.05 + 0.08 * min(restless, 1.0));
     color += slopeStrength * 0.05;
 
-    color = mist(color, distanceToCamera, 7.0, 0.04);
+    color = mist(color, distanceToCamera, 9.0, 0.03);
     gl_FragColor = vec4(paperBleed(color), 1.0);
   }
 `;

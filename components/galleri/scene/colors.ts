@@ -28,5 +28,5 @@ export function toWallPigment(hex: string): Rgb {
     hue /= 6;
   }
   const saturation = chroma === 0 ? 0 : chroma / (1 - Math.abs(2 * lightness - 1));
-  return hslToRgb(hue, Math.min(saturation, 0.3) * 0.85, Math.min(0.84, Math.max(0.72, lightness)));
+  return hslToRgb(hue, Math.min(saturation, 0.3) * 0.85, Math.min(0.86, Math.max(0.77, lightness)));
 }

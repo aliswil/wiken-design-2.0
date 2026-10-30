@@ -13,8 +13,6 @@ import type { Painting } from '../types';
 import { hexToRgb } from './colors';
 import type { HungPainting } from './world';
 
-const MEDIUM_RANGE = 20;
-const LARGE_RANGE = 7.5;
 const MAX_LARGE = 4;
 const MAX_LOADING = 2;
 const BLEND_SECONDS = 0.7;
@@ -31,6 +29,11 @@ interface Slot {
   textures: Texture[];
   distance: number;
   bounds: Sphere;
+}
+
+/** The sharp version is only worth loading once the picture fills a good part of the view. */
+function largeRange(slot: Slot) {
+  return Math.max(5, slot.hung.height * 2.4);
 }
 
 export function createToneTexture(painting: Painting) {
@@ -121,11 +124,11 @@ export class PaintingTextures {
     }
   }
 
-  /** Call once per rendered frame. `settled` is true when the visitor has come to rest. */
-  update(camera: Vector3, frustum: Frustum, settled: boolean, dt: number) {
+  /** Call once per rendered frame. `isNearby` says which rooms can be seen, `settled` that the visitor has come to rest. */
+  update(camera: Vector3, frustum: Frustum, isNearby: (hung: HungPainting) => boolean, settled: boolean, dt: number) {
     for (const slot of this.slots) {
       slot.distance = camera.distanceTo(slot.hung.center);
-      const visible = frustum.intersectsSphere(slot.bounds);
+      const visible = isNearby(slot.hung) && frustum.intersectsSphere(slot.bounds);
 
       if (slot.blending) {
         const uniforms = slot.hung.uniforms;
@@ -138,8 +141,8 @@ export class PaintingTextures {
       }
 
       if (slot.loading || slot.blending || slot.failed || this.loading >= MAX_LOADING) continue;
-      if (slot.tier < 1 && visible && slot.distance < MEDIUM_RANGE) void this.load(slot, 1);
-      else if (slot.tier === 1 && settled && visible && slot.distance < LARGE_RANGE) void this.load(slot, 2);
+      if (slot.tier < 1 && visible) void this.load(slot, 1);
+      else if (slot.tier === 1 && settled && visible && slot.distance < largeRange(slot)) void this.load(slot, 2);
     }
     this.evict();
   }
@@ -148,7 +151,7 @@ export class PaintingTextures {
     const large = this.slots.filter((slot) => slot.tier === 2 && !slot.blending);
     if (large.length <= MAX_LARGE) return;
     const furthest = large.reduce((a, b) => (b.distance > a.distance ? b : a));
-    if (furthest.distance < LARGE_RANGE) return;
+    if (furthest.distance < largeRange(furthest)) return;
     furthest.hung.uniforms.uFrom.value = furthest.textures[1];
     furthest.hung.uniforms.uTo.value = furthest.textures[1];
     furthest.textures[2].dispose();
