@@ -15,13 +15,18 @@ const SLOT_SHARE: Record<'duo' | 'leadLarge' | 'leadSmall' | 'solo' | 'wide', nu
   wide: 0.94,
 };
 
-const STRIP_SIZE = 'min(90vw, calc(56vh - 100px))';
+/** Mirrors --sw: the drawing is limited by the column height, which has a floor of 480px. */
+const STRIP_SIZE = 'min(90vw, max(calc(56vh - 100px), 187px))';
+
+/** The floor of --pw in the CSS: 460px of page height at 0.86. */
+const MIN_PAGE_WIDTH = 396;
 
 /** Mirrors the --pw formula in the CSS, so the browser picks the right candidate. */
 function sizesFor(share: number): string {
   const byWidth = `calc(${(share * 50).toFixed(2)}vw - ${Math.round(share * 32)}px)`;
   const byHeight = `calc(${(share * 86).toFixed(2)}vh - ${Math.round(share * 180)}px)`;
-  return `(max-width: 819px) ${STRIP_SIZE}, (max-aspect-ratio: 1/1) ${STRIP_SIZE}, min(${byWidth}, ${byHeight})`;
+  const floor = `${Math.round(share * MIN_PAGE_WIDTH)}px`;
+  return `(max-width: 819px) ${STRIP_SIZE}, (max-aspect-ratio: 1/1) ${STRIP_SIZE}, min(${byWidth}, max(${byHeight}, ${floor}))`;
 }
 
 function largeUrl(drawing: AvisDrawing): string {
@@ -117,7 +122,7 @@ function BackPage({ page }: { page: AvisPage }) {
         <p className={styles.colophonLine}>Akvarell og tusj</p>
         <nav aria-label="Vidare" className={styles.colophonLinks}>
           <Link href="/om-meg">Om meg</Link>
-          <Link href="/avisteikningar">Alle teikningane utan avis</Link>
+          <Link href="/avisteikningar">Alle teikningane i rutenett</Link>
         </nav>
       </div>
     </section>
@@ -145,13 +150,19 @@ function LeadFigures({ page, drawings }: { page: AvisPage; drawings: AvisDrawing
   );
 }
 
+function isWide({ width, height }: AvisDrawing): boolean {
+  return width > height;
+}
+
 function PageContent({ page, edition }: { page: AvisPage; edition: Edition }) {
   const { drawings } = edition;
   if (page.layout === 'lead') {
     return <LeadFigures page={page} drawings={drawings} />;
   }
   const alone = page.layout === 'front' && page.drawings.length === 1;
-  const share = alone || page.layout === 'wide' ? SLOT_SHARE.wide : SLOT_SHARE[page.layout === 'solo' ? 'solo' : 'duo'];
+  const wideAlone = alone && isWide(drawings[page.drawings[0]]);
+  const soloAlone = alone && !wideAlone;
+  const share = wideAlone || page.layout === 'wide' ? SLOT_SHARE.wide : SLOT_SHARE[soloAlone || page.layout === 'solo' ? 'solo' : 'duo'];
   return (
     <>
       {page.drawings.map((index) => (
@@ -164,8 +175,7 @@ function PageContent({ page, edition }: { page: AvisPage; edition: Edition }) {
 /** A front page holding a single drawing borrows the layout that drawing would get on its own. */
 function frontVariant(page: AvisPage, drawings: AvisDrawing[]): string {
   if (page.layout !== 'front' || page.drawings.length > 1) return '';
-  const { width, height } = drawings[page.drawings[0]];
-  return width > height ? styles.wide : styles.solo;
+  return isWide(drawings[page.drawings[0]]) ? styles.wide : styles.solo;
 }
 
 function SheetPage({ page, edition }: { page: AvisPage; edition: Edition }) {

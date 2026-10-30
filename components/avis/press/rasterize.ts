@@ -94,7 +94,6 @@ export function rasterize(ctx: CanvasRenderingContext2D, page: HTMLElement, shee
     ctx.letterSpacing = s.letterSpacing === 'normal' ? '0px' : s.letterSpacing;
     ctx.fillStyle = s.color;
     const ascent = ctx.measureText('x').fontBoundingBoxAscent;
-    const underline = s.textDecorationLine.includes('underline');
     const put = (from: number, to: number) => {
       range.setStart(node, from);
       range.setEnd(node, to);
@@ -106,14 +105,17 @@ export function rasterize(ctx: CanvasRenderingContext2D, page: HTMLElement, shee
       }
       const r = range.getBoundingClientRect();
       if (!r.width) return;
-      const baseline = r.top + ascent;
-      ctx.fillText(cased(value.slice(from, to), s.textTransform), r.left, baseline);
-      if (underline) {
-        const gap = baseline + (parseFloat(s.textUnderlineOffset) || 1.5);
-        line(r.left, gap, r.right, gap + (parseFloat(s.textDecorationThickness) || 1), s.color);
-      }
+      ctx.fillText(cased(value.slice(from, to), s.textTransform), r.left, r.top + ascent);
     };
     for (const match of value.matchAll(/\S+/g)) put(match.index, match.index + match[0].length);
+    if (s.textDecorationLine.includes('underline')) {
+      range.selectNodeContents(node);
+      for (const r of range.getClientRects()) {
+        if (!r.width) continue;
+        const gap = r.top + ascent + (parseFloat(s.textUnderlineOffset) || 1.5);
+        line(r.left, gap, r.right, gap + (parseFloat(s.textDecorationThickness) || 1), s.color);
+      }
+    }
   };
 
   const image = (img: HTMLImageElement, s: CSSStyleDeclaration) => {

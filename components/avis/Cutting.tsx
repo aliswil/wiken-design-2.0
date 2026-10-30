@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -119,6 +120,7 @@ export default function Cutting({ drawings, initial, origin, onClose }: CuttingP
   const paperRef = useRef<HTMLDivElement>(null);
   const prevRef = useRef<HTMLButtonElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
+  const focusHeir = useRef<HTMLButtonElement | null>(null);
   const pressStart = useRef<{ x: number; y: number; onBackdrop: boolean } | null>(null);
   const headingId = useId();
 
@@ -155,13 +157,19 @@ export default function Cutting({ drawings, initial, origin, onClose }: CuttingP
       if (target < 0 || target >= count) return;
       // A button that becomes disabled would drop the focus out of the dialog.
       const active = document.activeElement;
-      if (target === 0 && active === prevRef.current) nextRef.current?.focus();
-      if (target === count - 1 && active === nextRef.current) prevRef.current?.focus();
+      if (target === 0 && active === prevRef.current) focusHeir.current = nextRef.current;
+      if (target === count - 1 && active === nextRef.current) focusHeir.current = prevRef.current;
       indexRef.current = target;
       setIndex(target);
     },
     [count],
   );
+
+  // After the commit, because with two drawings the heir was disabled until now.
+  useLayoutEffect(() => {
+    focusHeir.current?.focus();
+    focusHeir.current = null;
+  }, [index]);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -241,12 +249,10 @@ export default function Cutting({ drawings, initial, origin, onClose }: CuttingP
           loading="eager"
           draggable={false}
         />
-        <div className={styles.cuttingText}>
+        <div className={styles.cuttingText} aria-live="polite" aria-atomic="true">
           {drawing.title && <h2 id={headingId}>{drawing.title}</h2>}
           {drawing.description && <p>{drawing.description}</p>}
-          <p className={styles.cuttingMeta} aria-live="polite">
-            {position}
-          </p>
+          <p className={styles.cuttingMeta}>{position}</p>
         </div>
       </div>
 

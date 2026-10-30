@@ -1,14 +1,9 @@
 /* Everything is sized from --pw (spread) or --sw (strip), so the paper scales as one piece. */
 
-.sheets {
+.reader {
   --nav: 81px;
   --controls: 64px;
   --viewport-h: 100vh;
-  --paper: #efe9da;
-  --ink: #1b1913;
-  --ink-soft: #4d483b;
-  --hair: rgba(27, 25, 19, 0.42);
-  --serif: var(--font-avis), Georgia, 'Times New Roman', serif;
 
   /* Spread */
   --ph: max(
@@ -22,30 +17,43 @@
 
   /* Strip */
   --sh: max(480px, calc(var(--viewport-h) - var(--nav) - var(--controls)));
-  --sw: min(calc(100vw - 14px), calc((var(--viewport-h) - var(--nav) - var(--controls)) * 0.62));
+  /* From --sh, floor included: zooming in or turning a phone must not shrink the column and its type. */
+  --sw: min(calc(100vw - 14px), calc(var(--sh) * 0.62));
   --su: calc(var(--sw) / 24);
 
   position: relative;
-  display: flex;
   width: 100%;
-  height: calc(var(--ph) + 32px);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-snap-type: x mandatory;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(27, 25, 19, 0.25) transparent;
 }
 
 @supports (height: 100svh) {
-  .sheets {
+  .reader {
     --viewport-h: 100svh;
   }
 }
 
 @media (min-width: 768px) {
-  .sheets {
+  .reader {
     --nav: 113px;
   }
+}
+
+.sheets {
+  --paper: #efe9da;
+  --ink: #1b1913;
+  --ink-soft: #4d483b;
+  --hair: rgba(27, 25, 19, 0.42);
+  --serif: var(--font-avis), Georgia, 'Times New Roman', serif;
+
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: calc(var(--ph) + 32px);
+  overscroll-behavior-x: contain;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(27, 25, 19, 0.25) transparent;
 }
 
 /* The reader's controls replace the scrollbar; without scripts it stays. */
@@ -81,7 +89,7 @@
   line-height: 1.2;
   color: var(--ink);
   background-color: var(--paper);
-  box-shadow: 0 0.1em 0.3em rgba(62, 52, 30, 0.14), 0 1.4em 2.6em -1.2em rgba(62, 52, 30, 0.42);
+  box-shadow: 0 0.1em 0.3em rgba(62, 52, 30, 0.14), 0 0.5em 0.9em -0.5em rgba(62, 52, 30, 0.42);
 }
 
 /* Keeps each page's shadow from falling on the page beside it. */
@@ -104,7 +112,7 @@
       180deg,
       transparent calc(50% - 0.5em),
       rgba(62, 52, 30, 0.05) calc(50% - 0.5px),
-      rgba(255, 255, 255, 0.2) calc(50% + 0.5px),
+      rgba(255, 255, 255, 0.06) calc(50% + 0.5px),
       transparent calc(50% + 0.5em)
     ),
     var(--spine, none);
@@ -503,9 +511,6 @@
     height: var(--sh);
     padding: calc(var(--su) * 0.75);
     font-size: var(--su);
-    line-height: 1.2;
-    color: var(--ink);
-    font-family: var(--serif);
     background-color: var(--paper);
     border-left: 1px solid var(--hair);
     scroll-snap-align: center;
@@ -521,7 +526,7 @@
       180deg,
       transparent calc(50% - 0.5em),
       rgba(62, 52, 30, 0.05) calc(50% - 0.5px),
-      rgba(255, 255, 255, 0.2) calc(50% + 0.5px),
+      rgba(255, 255, 255, 0.06) calc(50% + 0.5px),
       transparent calc(50% + 0.5em)
     );
   }
@@ -606,11 +611,6 @@
 
 /* ---------- Stage: DOM below, canvas over it, ring on top ---------- */
 
-.reader {
-  position: relative;
-  width: 100%;
-}
-
 .stage {
   position: relative;
   width: 100%;
@@ -627,7 +627,7 @@
 }
 
 .reader[data-webgl] .stage {
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
 }
 
 /* Still there for hit testing, focus and screen readers. */
@@ -636,6 +636,10 @@
   overflow-x: hidden;
   scroll-snap-type: none;
   cursor: grab;
+  touch-action: pan-y pinch-zoom;
+  user-select: none;
+  /* Neighbouring sheets the canvas doesn't draw dissolve once it is opaque, rather than pop. */
+  transition: opacity 160ms ease;
 }
 
 .reader[data-webgl] .sheets:active {
@@ -670,7 +674,7 @@
   align-items: center;
   justify-content: center;
   gap: 12px;
-  min-height: 64px;
+  min-height: var(--controls);
   padding: 10px 16px;
   color: #171717;
 }
@@ -764,12 +768,46 @@
   padding: 4px 12px;
   font-size: 0.8125rem;
   color: #f5f3ed;
-  white-space: nowrap;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  text-align: center;
   pointer-events: none;
   background: rgba(23, 23, 23, 0.82);
-  border-radius: 999px;
+  border-radius: 14px;
   transform: translateX(-50%);
-  transition: opacity 300ms ease;
+}
+
+/* Strip: the pill clears a two-line caption. */
+@media (max-width: 819px), (max-aspect-ratio: 1/1) {
+  .hint {
+    margin-bottom: calc(var(--su) * 4.4 + 8px);
+  }
+}
+
+/* Forty-seven stops need the width more than the row needs its air. */
+@media (max-width: 419px) {
+  .controls {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+}
+
+/* Below this the label would leave under 2 px per stop, so it takes its own row. */
+@media (max-width: 359px) {
+  .reader {
+    --controls: 88px;
+  }
+
+  .controls {
+    flex-wrap: wrap;
+    align-content: center;
+    row-gap: 3px;
+  }
+
+  .label {
+    flex-basis: 100%;
+    text-align: center;
+  }
 }
 
 /* ---------- Message when there is no paper to show ---------- */
@@ -806,7 +844,8 @@
   --pad: 20px;
   --text: 15rem;
   --edge: 72px;
-  --image-h: calc(100vh - 2 * var(--gap) - 2 * var(--pad));
+  --viewport-h: 100vh;
+  --image-h: calc(var(--viewport-h) - 2 * var(--gap) - 2 * var(--pad));
 
   position: fixed;
   inset: 0;
@@ -821,11 +860,12 @@
   background: transparent;
   border: 0;
   filter: drop-shadow(0 18px 28px rgba(20, 16, 8, 0.45));
+  touch-action: pan-y pinch-zoom;
 }
 
 @supports (height: 100dvh) {
   .cutting {
-    --image-h: calc(100dvh - 2 * var(--gap) - 2 * var(--pad));
+    --viewport-h: 100dvh;
   }
 }
 
@@ -848,12 +888,14 @@
   background-color: #efe9da;
 }
 
-/* The drawing's ratio is only known to the element itself, hence contain on a definite height. */
+/* Sized from the drawing's own ratio, so that the paper fits a wide drawing as well as a tall one. */
 .cuttingImage {
   display: block;
-  width: auto;
-  height: var(--image-h);
-  max-width: calc(100vw - 2 * var(--edge) - 2 * var(--pad) - var(--text) - 24px);
+  width: min(
+    calc(100vw - 2 * var(--edge) - 2 * var(--pad) - var(--text) - 24px),
+    calc(var(--image-h) * var(--r))
+  );
+  height: auto;
   object-fit: contain;
   mix-blend-mode: multiply;
   user-select: none;
@@ -948,14 +990,13 @@
 
 @media (max-width: 819px), (max-aspect-ratio: 1/1) {
   .cutting {
-    --pad: 14px;
-    --image-h: calc(100vh - 2 * 66px - 2 * var(--pad) - 8.5rem);
+    --pad: 8px;
+    --image-h: max(220px, calc(var(--viewport-h) - 2 * 58px - 2 * var(--pad) - 4.5rem));
+    overflow-y: auto;
   }
 
-  @supports (height: 100dvh) {
-    .cutting {
-      --image-h: calc(100dvh - 2 * 66px - 2 * var(--pad) - 8.5rem);
-    }
+  .cutting[open] {
+    place-items: safe center;
   }
 
   .cuttingPaper {
@@ -964,20 +1005,22 @@
     max-width: calc(100vw - 16px);
   }
 
-  /* Almost every drawing is a tall one, so a phone can size for that before the file arrives. */
   .cuttingImage {
-    width: min(calc(100vw - 16px - 2 * var(--pad)), calc(var(--image-h) * 0.56));
-    height: auto;
-    max-width: none;
-    max-height: var(--image-h);
+    width: min(calc(100vw - 16px - 2 * var(--pad)), calc(var(--image-h) * var(--r)));
   }
 
+  /* The drawing sets the paper's width and the text wraps to it. */
   .cuttingText {
-    max-width: none;
+    width: 0;
+    min-width: 100%;
   }
 
   .cuttingText h2 {
     font-size: 1.375rem;
+  }
+
+  .cuttingText .cuttingMeta {
+    white-space: normal;
   }
 
   .cuttingPrev,
@@ -987,40 +1030,37 @@
   }
 }
 
+/* Too short to stack text under the drawing: back to side by side, phone or zoomed window. */
+@media (max-height: 500px) and (min-aspect-ratio: 1/1) and (min-width: 400px) {
+  .cutting {
+    --pad: 14px;
+    --text: min(15rem, 34vw);
+    --edge: 58px;
+    --image-h: max(160px, calc(var(--viewport-h) - 2 * 16px - 2 * var(--pad)));
+  }
+
+  .cuttingPaper {
+    grid-template-columns: auto auto;
+  }
+
+  .cuttingImage {
+    width: min(
+      calc(100vw - 2 * var(--edge) - 2 * var(--pad) - var(--text) - 24px),
+      calc(var(--image-h) * var(--r))
+    );
+  }
+
+  .cuttingText {
+    width: auto;
+    min-width: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .turn,
-  .hint,
   .cuttingClose,
   .cuttingPrev,
   .cuttingNext {
     transition: none;
-  }
-}
-
-/* ---------- Reader additions: the press needs the gestures all the way down ---------- */
-
-[data-webgl] .sheets {
-  touch-action: pan-y;
-  user-select: none;
-}
-
-.cutting {
-  touch-action: pan-y pinch-zoom;
-}
-
-/* Sized from the drawing's own ratio, so that the paper fits a wide drawing as well as a tall one. */
-.cuttingImage {
-  width: min(
-    calc(100vw - 2 * var(--edge) - 2 * var(--pad) - var(--text) - 24px),
-    calc(var(--image-h) * var(--r))
-  );
-  height: auto;
-  max-width: none;
-  max-height: none;
-}
-
-@media (max-width: 819px), (max-aspect-ratio: 1/1) {
-  .cuttingImage {
-    width: min(calc(100vw - 16px - 2 * var(--pad)), calc(var(--image-h) * var(--r)));
   }
 }

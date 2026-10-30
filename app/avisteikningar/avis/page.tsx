@@ -11,7 +11,7 @@ import styles from '@/components/avis/avis.module.css';
 export const revalidate = 600;
 
 const title = 'Avis – Avisteikningar | Wiken Design';
-const description = 'Avisteikningar av Wiken Design, sette opp som ei avis du kan bla i. Akvarell og tusj.';
+const description = 'Avisteikningar av Wiken Design, samla i ei avis du kan bla i. Akvarell og tusj.';
 
 export const metadata: Metadata = {
   title,
@@ -42,36 +42,29 @@ function toDrawing(item: GalleryItem, index: number): AvisDrawing {
   };
 }
 
-async function loadDrawings(): Promise<AvisDrawing[] | null> {
-  try {
-    const items = await getGalleryItems('avisteikningar');
-    return items.filter((item) => item.drawing?.asset?.url).map(toDrawing);
-  } catch {
-    return null;
-  }
-}
-
-function Notice({ children }: { children: string }) {
-  return (
-    <div className={styles.notice}>
-      <h1>Avisteikningar</h1>
-      <p>{children}</p>
-    </div>
-  );
+async function loadDrawings(): Promise<AvisDrawing[]> {
+  // A failure must throw: error.tsx shows the notice, and ISR keeps the last good page.
+  const items = await getGalleryItems('avisteikningar');
+  return items.filter((item) => item.drawing?.asset?.url).map(toDrawing);
 }
 
 export default async function AvisPage() {
-  const drawings = await loadDrawings();
-  const edition = drawings && buildEdition(drawings);
+  const edition = buildEdition(await loadDrawings());
 
   return (
     <div lang="nn" className={oldStandard.variable}>
-      {!edition && <Notice>Avisa er ikkje tilgjengeleg akkurat no. Prøv igjen litt seinare.</Notice>}
-      {edition?.pages.length === 0 && <Notice>Bilete kjem seinare.</Notice>}
-      {edition && edition.pages.length > 0 && (
-        <AvisReader edition={edition}>
-          <AvisEdition edition={edition} />
-        </AvisReader>
+      {edition.pages.length === 0 ? (
+        <div className={styles.notice}>
+          <h1>Avisteikningar</h1>
+          <p>Bilete kjem seinare.</p>
+        </div>
+      ) : (
+        <div className={styles.reader}>
+          <div className={styles.stage} data-avis-stage>
+            <AvisEdition edition={edition} />
+          </div>
+          <AvisReader edition={edition} />
+        </div>
       )}
     </div>
   );

@@ -13,10 +13,12 @@ const HAND_SPRING = 220;
 const HAND_DAMP = 30;
 const HAND_TURN = 2.8;
 const HAND_DRIFT = 0.004;
-const HAND_SIGMA = 0.12;
+const HAND_SIGMA_ACROSS = 0.12;
+const HAND_SIGMA_ALONG = 0.32;
 const FLEX_ACROSS = 0.15;
 const FLEX_ALONG = 0.14;
 const FLEX_FOLD = 0.003;
+const FLEX_FOLD_HELD = 0.02;
 const FLEX2_ACROSS = 0.05;
 const FLEX2_ALONG = 0.08;
 const FLEX2_FOLD = 0.0005;
@@ -41,6 +43,8 @@ export interface Sheet {
   /** The side the sheet is heading for. */
   land: Side;
   lay(side: Side): void;
+  /** Stands a resting sheet up around the hinge, at this angle. */
+  stand(angle: number): void;
   grip(u: number, v: number): void;
   /** Hand position from the cosine of the arc angle. Holds until released. */
   pull(cos: number, dy: number): void;
@@ -353,7 +357,7 @@ export function createSheet(cols: number, rows: number, aspect: number): Sheet {
 
     if (handOn) moveHand();
 
-    flexAll(1, FLEX_ACROSS, FLEX_ALONG, FLEX_FOLD);
+    flexAll(1, FLEX_ACROSS, FLEX_ALONG, handOn ? FLEX_FOLD_HELD : FLEX_FOLD);
     flexAll(2, FLEX2_ACROSS, FLEX2_ALONG, FLEX2_FOLD);
     plank();
     solve(tight, linkA.length, 1, true);
@@ -379,7 +383,7 @@ export function createSheet(cols: number, rows: number, aspect: number): Sheet {
       const v = Math.sqrt(vx * vx + vy * vy + vz * vz) / H;
       if (v > speed) speed = v;
       if (pos[p + 2] > top) top = pos[p + 2];
-      const want = Math.min(Math.max((v - 0.5) / 4.5, 0), 1);
+      const want = Math.min(Math.max((v - 0.3) / 6, 0), 0.6);
       loose[i] += (want - loose[i]) * 0.03;
     }
   };
@@ -423,6 +427,16 @@ export function createSheet(cols: number, rows: number, aspect: number): Sheet {
       clock = acc = speed = top = 0;
       resting = true;
     },
+    stand(a) {
+      if (!resting) return;
+      for (let i = 0; i < count; i++) {
+        const u = (i % cols) * du;
+        pos[i * 3] = u * Math.cos(a);
+        pos[i * 3 + 2] = u * Math.sin(a);
+      }
+      old.set(pos);
+      normals();
+    },
     grip(u, v) {
       const c = Math.min(Math.max(Math.round(Math.max(u, MIN_GRIP) * (cols - 1)), 1), cols - 1);
       const r = Math.min(Math.max(Math.round(v * (rows - 1)), 0), rows - 1);
@@ -432,8 +446,10 @@ export function createSheet(cols: number, rows: number, aspect: number): Sheet {
         const ci = i % cols;
         if (ci === 0) continue;
         inv[i] = 1;
-        const d2 = ((ci - c) * du) ** 2 + (((i - ci) / cols - r) * dv) ** 2;
-        const w = Math.exp(-d2 / (2 * HAND_SIGMA * HAND_SIGMA));
+        // A hand holds a stretch of the edge: a single point would pinch the sheet into a beak.
+        const across = ((ci - c) * du) / HAND_SIGMA_ACROSS;
+        const along = (((i - ci) / cols - r) * dv) / HAND_SIGMA_ALONG;
+        const w = Math.exp(-(across * across + along * along) / 2);
         if (w > 0.02) {
           handIdx.push(i);
           handW.push(w);

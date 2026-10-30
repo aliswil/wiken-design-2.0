@@ -1,17 +1,12 @@
 'use client';
 
 import {
-  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
-  type FocusEvent as ReactFocusEvent,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from 'react';
 import styles from './avis.module.css';
 import Cutting from './Cutting';
@@ -20,7 +15,6 @@ import type { AvisEdition, CreatePress, Press, PressMode } from './types';
 
 interface AvisReaderProps {
   edition: AvisEdition;
-  children: ReactNode;
 }
 
 interface Gesture {
@@ -37,9 +31,12 @@ const REDUCED_QUERY = '(prefers-reduced-motion: reduce)';
 const COARSE_QUERY = '(pointer: coarse)';
 const TOO_SLOW_KEY = 'avis-press-too-slow';
 const GRAB_THRESHOLD_PX = 8;
+const WHEEL_TURN_PX = 40;
+const WHEEL_QUIET_MS = 180;
 const CANVAS_FADE_MS = 160;
 const RESIZE_DEBOUNCE_MS = 200;
 const SMOOTH_SETTLE_MS = 150;
+const STAGE_SELECTOR = '[data-avis-stage]';
 const SHEETS_SELECTOR = '[data-avis-sheets]';
 
 function useMediaQuery(query: string): boolean | null {
@@ -143,7 +140,12 @@ function stopLabel(edition: AvisEdition, mode: PressMode, stop: number): string 
   return `Side ${range} av ${edition.pages.length}`;
 }
 
-export default function AvisReader({ edition, children }: AvisReaderProps) {
+/**
+ * The root, the stage and the sheets are server markup in page.tsx, beside this component.
+ * As its children they failed to hydrate on about one load in four, depending on when their
+ * RSC chunk arrived, and a Suspense boundary around them hides the paper from no-JS visitors.
+ */
+export default function AvisReader({ edition }: AvisReaderProps) {
   const isStrip = useMediaQuery(STRIP_QUERY);
   const reduced = useMediaQuery(REDUCED_QUERY);
   const coarse = useMediaQuery(COARSE_QUERY);
@@ -154,7 +156,8 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
   const [turned, setTurned] = useState(false);
   const [cutting, setCutting] = useState<{ index: number; origin: DOMRect | null } | null>(null);
 
-  const stageRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLElement | null>(null);
+  const stageRef = useRef<HTMLElement | null>(null);
   const ringRef = useRef<HTMLDivElement>(null);
   const prevRef = useRef<HTMLButtonElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
@@ -169,6 +172,7 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
   const suppressClick = useRef(false);
   const focusLink = useRef<HTMLElement | null>(null);
   const hoverLink = useRef<HTMLElement | null>(null);
+  const focusHeir = useRef<HTMLButtonElement | null>(null);
 
   const stops = stopCount(edition, mode);
 
@@ -199,11 +203,11 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
       if (next === stopRef.current) return;
       // A button that becomes disabled would drop the focus out of the controls.
       const active = document.activeElement;
-      if (next === 0 && active === prevRef.current) nextRef.current?.focus();
-      if (next === Number(scrubRef.current?.max) && active === nextRef.current) {
-        prevRef.current?.focus();
-      }
+      if (next === 0 && active === prevRef.current) focusHeir.current = nextRef.current;
+      if (next === Number(scrubRef.current?.max) && active === nextRef.current) focusHeir.current = prevRef.current;
       stopRef.current = next;
+      // The pointer may no longer be over this link once the page has turned under it.
+      hoverLink.current = null;
       setStop(next);
       setTurned(true);
     },
@@ -255,7 +259,25 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
     [commitStop, placeRing, settleScroll, sheetsElement],
   );
 
-  // Keeps the same drawing in view when the mode changes.
+  useLayoutEffect(() => {
+    rootRef.current = ringRef.current?.parentElement ?? null;
+    stageRef.current = rootRef.current?.querySelector<HTMLElement>(STAGE_SELECTOR) ?? null;
+  }, []);
+
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    if (mode) root.dataset.mode = mode;
+    root.toggleAttribute('data-webgl', webgl);
+  }, [mode, webgl]);
+
+  // After the commit, because when jumping between the ends the heir was disabled until now.
+  useLayoutEffect(() => {
+    focusHeir.current?.focus();
+    focusHeir.current = null;
+  }, [stop]);
+
+  // Keeps the same drawing in view when the mode changes, or the focused one if there is one.
   useLayoutEffect(() => {
     if (!mode) return;
     const previous = modeRef.current;
@@ -263,7 +285,10 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
     const sheets = sheetsElement();
     if (!sheets) return;
     if (previous && previous !== mode) {
-      const next = matchingStop(sheets, previous, stopRef.current, mode);
+      const active = document.activeElement;
+      const focused = active && sheets.contains(active) ? stopOf(active, sheets, mode) : -1;
+      const next = focused !== -1 ? focused : matchingStop(sheets, previous, stopRef.current, mode);
+      hoverLink.current = null;
       stopRef.current = next;
       setStop(next);
       pinToStop(next);
@@ -276,12 +301,13 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
 
   // DOM mode follows the scroller. With the press on, the scroller is held at the stop.
   useEffect(() => {
-    const sheets = sheetsElement();
-    if (!sheets) return;
+    const stage = stageRef.current;
+    if (!stage) return;
     let frame = 0;
-    const handleScroll = () => {
+    const handleScroll = (event: Event) => {
+      const sheets = sheetsElement();
       const currentMode = modeRef.current;
-      if (!currentMode) return;
+      if (!sheets || event.target !== sheets || !currentMode) return;
       if (settleTimer.current !== null) {
         window.clearTimeout(settleTimer.current);
         settleTimer.current = window.setTimeout(settleScroll, SMOOTH_SETTLE_MS);
@@ -301,9 +327,10 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
         }
       });
     };
-    sheets.addEventListener('scroll', handleScroll, { passive: true });
+    // Scroll doesn't bubble, but it does capture.
+    stage.addEventListener('scroll', handleScroll, { capture: true, passive: true });
     return () => {
-      sheets.removeEventListener('scroll', handleScroll);
+      stage.removeEventListener('scroll', handleScroll, { capture: true });
       window.cancelAnimationFrame(frame);
       if (settleTimer.current !== null) {
         window.clearTimeout(settleTimer.current);
@@ -376,7 +403,8 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
     let instance: Press | null = null;
     let canvas: HTMLCanvasElement | null = null;
     let fade: Animation | null = null;
-    let readyEarly = false;
+    const startWidth = stage.clientWidth;
+    const startHeight = stage.clientHeight;
 
     const teardown = () => {
       cancelled = true;
@@ -393,6 +421,8 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
     const activate = (press: Press, surface: HTMLCanvasElement, startStop: number) => {
       pressRef.current = press;
       pinToStop(stopRef.current);
+      // The debounced resize below can't reach a press that isn't active yet.
+      if (stage.clientWidth !== startWidth || stage.clientHeight !== startHeight) press.resize();
       if (stopRef.current !== startStop) press.turnTo(stopRef.current);
       // The canvas comes in over the sheets first, so that hiding them doesn't show.
       fade = surface.animate({ opacity: [0, 1] }, { duration: CANVAS_FADE_MS });
@@ -424,7 +454,7 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
       surface.className = styles.canvas;
       surface.style.opacity = '0';
       surface.setAttribute('aria-hidden', 'true');
-      stage.insertBefore(surface, ringRef.current);
+      stage.append(surface);
       canvas = surface;
 
       const startStop = stopRef.current;
@@ -436,9 +466,7 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
           stop: startStop,
           force,
           onReady: () => {
-            if (cancelled) return;
-            if (instance) activate(instance, surface, startStop);
-            else readyEarly = true;
+            if (!cancelled && instance) activate(instance, surface, startStop);
           },
           onStop: (next) => {
             if (cancelled) return;
@@ -460,12 +488,7 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
         instance = null;
       }
 
-      if (cancelled) return;
-      if (!instance) {
-        teardown();
-        return;
-      }
-      if (readyEarly) activate(instance, surface, startStop);
+      if (!cancelled && !instance) teardown();
     };
 
     const useIdle = 'requestIdleCallback' in window;
@@ -480,118 +503,161 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
     };
   }, [mode, reduced, commitStop, pinToStop, placeRing, sheetsElement]);
 
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    suppressClick.current = false;
-    if (!pressRef.current || event.button !== 0 || gesture.current) return;
-    gesture.current = {
-      id: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      dragging: false,
-      lastX: event.clientX,
-      lastTime: event.timeStamp,
-      velocity: 0,
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    // A sideways trackpad swipe turns one leaf, however long its inertia keeps sending events.
+    let wheelSum = 0;
+    let wheelQuietAt = 0;
+    const handleWheel = (event: WheelEvent) => {
+      if (!pressRef.current || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+      event.preventDefault();
+      const waiting = event.timeStamp < wheelQuietAt;
+      wheelQuietAt = waiting ? event.timeStamp + WHEEL_QUIET_MS : wheelQuietAt;
+      if (waiting) return;
+      wheelSum += event.deltaX;
+      if (Math.abs(wheelSum) < WHEEL_TURN_PX) return;
+      goTo(stopRef.current + Math.sign(wheelSum));
+      wheelSum = 0;
+      wheelQuietAt = event.timeStamp + WHEEL_QUIET_MS;
     };
-  };
 
-  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const press = pressRef.current;
-    if (!press) return;
-    const active = gesture.current;
+    const handlePointerDown = (event: PointerEvent) => {
+      suppressClick.current = false;
+      if (!pressRef.current || event.button !== 0 || gesture.current) return;
+      gesture.current = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        dragging: false,
+        lastX: event.clientX,
+        lastTime: event.timeStamp,
+        velocity: 0,
+      };
+    };
 
-    if (!active) {
-      if (event.pointerType === 'mouse') {
-        press.hover(event.clientX, event.clientY);
-        hoverLink.current =
-          event.target instanceof Element ? event.target.closest<HTMLElement>('a[href]') : null;
+    const handlePointerMove = (event: PointerEvent) => {
+      const press = pressRef.current;
+      if (!press) return;
+      const active = gesture.current;
+
+      if (!active) {
+        if (event.pointerType === 'mouse') {
+          press.hover(event.clientX, event.clientY);
+          hoverLink.current =
+            event.target instanceof Element ? event.target.closest<HTMLElement>('a[href]') : null;
+          placeRing();
+        }
+        return;
+      }
+      if (active.id !== event.pointerId) return;
+
+      if (!active.dragging) {
+        if (event.buttons === 0) {
+          gesture.current = null;
+          return;
+        }
+        const dx = Math.abs(event.clientX - active.x);
+        const dy = Math.abs(event.clientY - active.y);
+        if (dx <= GRAB_THRESHOLD_PX && dy <= GRAB_THRESHOLD_PX) return;
+        suppressClick.current = true;
+        if (dy >= dx || !press.grab(active.x, active.y)) {
+          gesture.current = null;
+          return;
+        }
+        active.dragging = true;
+        setTurned(true);
+        stage.setPointerCapture(event.pointerId);
         placeRing();
       }
-      return;
-    }
-    if (active.id !== event.pointerId) return;
 
-    if (!active.dragging) {
-      if (event.buttons === 0) {
-        gesture.current = null;
-        return;
+      const elapsed = event.timeStamp - active.lastTime;
+      if (elapsed > 0) {
+        const velocity = ((event.clientX - active.lastX) / elapsed) * 1000;
+        active.velocity = active.velocity * 0.4 + velocity * 0.6;
+        active.lastX = event.clientX;
+        active.lastTime = event.timeStamp;
       }
-      const dx = Math.abs(event.clientX - active.x);
-      const dy = Math.abs(event.clientY - active.y);
-      if (dx <= GRAB_THRESHOLD_PX && dy <= GRAB_THRESHOLD_PX) return;
-      suppressClick.current = true;
-      if (dy >= dx || !press.grab(active.x, active.y)) {
-        gesture.current = null;
-        return;
+      press.drag(event.clientX, event.clientY);
+    };
+
+    const finishGesture = (event: PointerEvent, cancelled: boolean) => {
+      const active = gesture.current;
+      if (!active || active.id !== event.pointerId) return;
+      gesture.current = null;
+      if (active.dragging) {
+        // A finger that stopped before lifting isn't flicking.
+        const stale = event.timeStamp - active.lastTime > 80;
+        pressRef.current?.release(cancelled || stale ? 0 : active.velocity);
+        placeRing();
       }
-      active.dragging = true;
-      event.currentTarget.setPointerCapture(event.pointerId);
+    };
+
+    const handlePointerLeave = (event: PointerEvent) => {
+      if (event.pointerType !== 'mouse') return;
+      if (!gesture.current?.dragging) gesture.current = null;
+      pressRef.current?.hover(null, null);
+      hoverLink.current = null;
       placeRing();
-    }
+    };
 
-    const elapsed = event.timeStamp - active.lastTime;
-    if (elapsed > 0) {
-      const velocity = ((event.clientX - active.lastX) / elapsed) * 1000;
-      active.velocity = active.velocity * 0.4 + velocity * 0.6;
-      active.lastX = event.clientX;
-      active.lastTime = event.timeStamp;
-    }
-    press.drag(event.clientX, event.clientY);
-  };
+    const handleClickCapture = (event: MouseEvent) => {
+      // A drag can end without a click on the stage, and a keyboard click isn't its click.
+      const suppress = suppressClick.current && event.detail !== 0;
+      suppressClick.current = false;
+      if (!suppress) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
 
-  const finishGesture = (event: ReactPointerEvent<HTMLDivElement>, cancelled: boolean) => {
-    const active = gesture.current;
-    if (!active || active.id !== event.pointerId) return;
-    gesture.current = null;
-    if (active.dragging) {
-      // A finger that stopped before lifting isn't flicking.
-      const stale = event.timeStamp - active.lastTime > 80;
-      pressRef.current?.release(cancelled || stale ? 0 : active.velocity);
+    const handleClick = (event: MouseEvent) => {
+      if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (!(event.target instanceof Element)) return;
+      const link = event.target.closest<HTMLElement>('a[data-drawing]');
+      if (!link) return;
+      const index = Number(link.dataset.drawing);
+      if (!edition.drawings[index]) return;
+      event.preventDefault();
+      const image = link.querySelector('img') ?? link;
+      setCutting({ index, origin: image.getBoundingClientRect() });
+    };
+
+    const handleDragStart = (event: DragEvent) => {
+      if (pressRef.current) event.preventDefault();
+    };
+
+    const handleFocus = (event: FocusEvent) => {
+      const sheets = sheetsElement();
+      const currentMode = modeRef.current;
+      const element = event.target;
+      if (!sheets || !currentMode || !(element instanceof HTMLElement) || !sheets.contains(element)) return;
+      const target = stopOf(element, sheets, currentMode);
+      if (target !== -1 && target !== stopRef.current) goTo(target);
+      focusLink.current = element.matches(':focus-visible') ? element : null;
       placeRing();
-    }
-  };
+    };
 
-  const handlePointerLeave = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType !== 'mouse') return;
-    if (!gesture.current?.dragging) gesture.current = null;
-    pressRef.current?.hover(null, null);
-    hoverLink.current = null;
-    placeRing();
-  };
+    const handleBlur = () => {
+      focusLink.current = null;
+      placeRing();
+    };
 
-  const handleClickCapture = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (!suppressClick.current) return;
-    suppressClick.current = false;
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    if (!(event.target instanceof Element)) return;
-    const link = event.target.closest<HTMLElement>('a[data-drawing]');
-    if (!link) return;
-    const index = Number(link.dataset.drawing);
-    if (!edition.drawings[index]) return;
-    event.preventDefault();
-    const image = link.querySelector('img') ?? link;
-    setCutting({ index, origin: image.getBoundingClientRect() });
-  };
-
-  const handleFocus = (event: ReactFocusEvent<HTMLDivElement>) => {
-    const sheets = sheetsElement();
-    const currentMode = modeRef.current;
-    const element = event.target;
-    if (!sheets || !currentMode || !(element instanceof HTMLElement) || !sheets.contains(element)) return;
-    const target = stopOf(element, sheets, currentMode);
-    if (target !== -1 && target !== stopRef.current) goTo(target);
-    focusLink.current = element.matches(':focus-visible') ? element : null;
-    placeRing();
-  };
-
-  const handleBlur = () => {
-    focusLink.current = null;
-    placeRing();
-  };
+    const listeners = new AbortController();
+    const { signal } = listeners;
+    stage.addEventListener('pointerdown', handlePointerDown, { signal });
+    stage.addEventListener('pointermove', handlePointerMove, { signal });
+    stage.addEventListener('pointerup', (event) => finishGesture(event, false), { signal });
+    stage.addEventListener('pointercancel', (event) => finishGesture(event, true), { signal });
+    stage.addEventListener('pointerleave', handlePointerLeave, { signal });
+    stage.addEventListener('dragstart', handleDragStart, { signal });
+    stage.addEventListener('wheel', handleWheel, { signal, passive: false });
+    stage.addEventListener('click', handleClickCapture, { signal, capture: true });
+    stage.addEventListener('click', handleClick, { signal });
+    stage.addEventListener('focusin', handleFocus, { signal });
+    stage.addEventListener('focusout', handleBlur, { signal });
+    return () => listeners.abort();
+  }, [edition.drawings, goTo, placeRing, sheetsElement]);
 
   const handleCuttingClose = useCallback((index: number) => {
     // The focus handler above turns the newspaper to this link.
@@ -606,79 +672,66 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
   const showHint = !turned && (webgl || coarse === true);
 
   return (
-    <div className={styles.reader} data-mode={mode ?? undefined} data-webgl={webgl ? '' : undefined}>
-      <div
-        ref={stageRef}
-        className={styles.stage}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={(event) => finishGesture(event, false)}
-        onPointerCancel={(event) => finishGesture(event, true)}
-        onPointerLeave={handlePointerLeave}
-        onDragStart={(event) => {
-          if (pressRef.current) event.preventDefault();
-        }}
-        onClickCapture={handleClickCapture}
-        onClick={handleClick}
-        onFocus={handleFocus}
-        onBlur={handleBlur}
-      >
-        {/* The server's sheets can arrive after this component starts hydrating. Without
-            a boundary React replays the stage, and the replay reads as a hydration mismatch. */}
-        <Suspense fallback={null}>{children}</Suspense>
-        <div ref={ringRef} className={styles.ring} aria-hidden="true" />
-      </div>
+    <>
+      <div ref={ringRef} className={styles.ring} aria-hidden="true" />
 
-      <nav className={styles.controls} aria-label="Bla i avisa">
-        {mode && stops > 1 && (
-          <>
-            <button
-              ref={prevRef}
-              type="button"
-              className={styles.turn}
-              aria-label="Førre side"
-              disabled={current === 0}
-              onClick={() => goTo(current - 1)}
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-                <path d="M15 5l-7 7 7 7" />
-              </svg>
-            </button>
-            <input
-              ref={scrubRef}
-              type="range"
-              className={styles.scrub}
-              min={0}
-              max={stops - 1}
-              step={1}
-              value={current}
-              aria-label="Bla i avisa"
-              aria-valuetext={label}
-              onChange={(event) => goTo(Number(event.target.value))}
-            />
-            <button
-              ref={nextRef}
-              type="button"
-              className={styles.turn}
-              aria-label="Neste side"
-              disabled={current === stops - 1}
-              onClick={() => goTo(current + 1)}
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-                <path d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-            <p className={styles.label} aria-live="polite">
-              {label}
+      {mode && stops > 1 ? (
+        <nav
+          className={styles.controls}
+          aria-label="Bla i avisa"
+          style={cutting ? { visibility: 'hidden' } : undefined}
+        >
+          <button
+            ref={prevRef}
+            type="button"
+            className={styles.turn}
+            aria-label={mode === 'strip' ? 'Førre teikning' : 'Førre side'}
+            disabled={current === 0}
+            onClick={() => goTo(current - 1)}
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+          </button>
+          <input
+            ref={scrubRef}
+            type="range"
+            className={styles.scrub}
+            min={0}
+            max={stops - 1}
+            step={1}
+            value={current}
+            aria-label="Bla i avisa"
+            aria-valuetext={label}
+            aria-keyshortcuts="ArrowLeft ArrowRight Home End"
+            onChange={(event) => goTo(Number(event.target.value))}
+          />
+          <button
+            ref={nextRef}
+            type="button"
+            className={styles.turn}
+            aria-label={mode === 'strip' ? 'Neste teikning' : 'Neste side'}
+            disabled={current === stops - 1}
+            onClick={() => goTo(current + 1)}
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          <p className={styles.label} aria-live="polite">
+            {label}
+          </p>
+          {showHint && (
+            <p className={styles.hint}>
+              {mode === 'strip'
+                ? 'Sveip for å bla, trykk på ei teikning for å sjå ho stort'
+                : 'Dra i sida for å bla, klikk på ei teikning for å sjå ho stort'}
             </p>
-            {showHint && (
-              <p className={styles.hint}>
-                {mode === 'strip' ? 'Sveip for å bla' : 'Dra i sida for å bla'}
-              </p>
-            )}
-          </>
-        )}
-      </nav>
+          )}
+        </nav>
+      ) : (
+        <div className={styles.controls} />
+      )}
 
       {cutting && (
         <Cutting
@@ -688,6 +741,6 @@ export default function AvisReader({ edition, children }: AvisReaderProps) {
           onClose={handleCuttingClose}
         />
       )}
-    </div>
+    </>
   );
 }

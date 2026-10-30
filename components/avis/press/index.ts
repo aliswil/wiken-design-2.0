@@ -5,6 +5,9 @@ import { loadFonts, paperColor, prepareImages, rasterize } from './rasterize';
 import { FLAT_FS, FLAT_VS, PAGE_FS, PAGE_VS } from './shaders';
 import { createSheet, gridFor, type Sheet, type Side } from './sheet';
 
+const STRIP_BACK_FROM = 0.05;
+const STRIP_BACK_REACH = 0.75;
+const STRIP_BACK_DONE = 0.4;
 const MAX_IN_AIR = 3;
 const STAGGER = 0.16;
 const FLICK = 500;
@@ -42,6 +45,7 @@ interface Mesh {
   nrm: WebGLBuffer;
   loose: WebGLBuffer;
   uv: WebGLBuffer;
+  indices: WebGLBuffer;
   count: number;
 }
 
@@ -71,7 +75,8 @@ const build: CreatePress = (options) => {
   const gl = canvas.getContext('webgl2', {
     alpha: true,
     premultipliedAlpha: true,
-    antialias: true,
+    // Above this the pixels are small enough, and MSAA costs far more memory on a big canvas.
+    antialias: window.devicePixelRatio < 1.5,
     depth: true,
     powerPreference: 'low-power',
     failIfMajorPerformanceCaveat: !force,
@@ -80,7 +85,8 @@ const build: CreatePress = (options) => {
 
   const nav = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
   const scarce = (nav.deviceMemory ?? 8) <= 4 || nav.connection?.saveData === true;
-  const dpr = Math.min(window.devicePixelRatio || 1, scarce ? 1.5 : 2);
+  const readDpr = () => Math.min(window.devicePixelRatio || 1, scarce ? 1.5 : 2);
+  let dpr = readDpr();
   const snap = (v: number) => Math.round(v * dpr) / dpr;
   const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
@@ -102,6 +108,9 @@ const build: CreatePress = (options) => {
 
   const paint2d = document.createElement('canvas').getContext('2d');
   if (!paint2d) return null;
+  // Canvas text takes -webkit-font-smoothing from the element's inherited style, which a canvas outside the document doesn't have.
+  paint2d.canvas.style.display = 'none';
+  canvas.after(paint2d.canvas);
 
   const paper = paperColor(leaves[0].recto, sheets);
   const paperRgb = (paper.match(/[\d.]+/g) ?? ['239', '233', '219']).slice(0, 3).map((v) => Number(v) / 255);
@@ -123,7 +132,7 @@ const build: CreatePress = (options) => {
   const pool: { sheet: Sheet; mesh: Mesh }[] = [];
   const free: { sheet: Sheet; mesh: Mesh }[] = [];
   const faces = new Map<HTMLElement, Face>();
-  const asked = new WeakSet<HTMLElement>();
+  let asked = new WeakSet<HTMLElement>();
   const stale = new Set<HTMLElement>();
 
   let drag: Drag | null = null;
@@ -147,12 +156,13 @@ const build: CreatePress = (options) => {
     faces.forEach((face, el) => dropFace(el, face));
     for (const { mesh } of pool) {
       gl.deleteVertexArray(mesh.vao);
-      for (const buffer of [mesh.pos, mesh.nrm, mesh.loose, mesh.uv]) gl.deleteBuffer(buffer);
+      for (const buffer of [mesh.pos, mesh.nrm, mesh.loose, mesh.uv, mesh.indices]) gl.deleteBuffer(buffer);
     }
     pool.length = free.length = 0;
   };
 
   const measure = () => {
+    dpr = readDpr();
     // A sheet in the air looms past the stage, so the canvas reaches beyond it,
     // though never past the end of the document, which would add a scrollbar.
     canvas.style.top = canvas.style.height = '';
@@ -296,13 +306,15 @@ const build: CreatePress = (options) => {
     idle = 0;
     if (dead || !ready) return;
     const want = wanted();
+    // A lone turn keeps its frames: painting waits for the landing, which schedules this again.
+    const hold = flights.length === 1 && !flights[0].lift && !drag && at === goal;
     const inAir = (el: HTMLElement) => flights.some((f) => leaves[f.leaf].recto === el || leaves[f.leaf].verso === el);
     for (const [el, face] of faces) {
       if (!want.includes(el) && !inAir(el) && !isVisible(el)) dropFace(el, face);
     }
     for (const el of want) {
       askForImages(el);
-      if (!faces.has(el) || stale.has(el)) {
+      if (!hold && (!faces.has(el) || stale.has(el))) {
         paintFace(el);
         wake();
         schedule();
@@ -345,10 +357,11 @@ const build: CreatePress = (options) => {
       }
     }
     const uv = attr(3, 2, uvs, gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+    const indices = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indices);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, Uint16Array.from(index), gl.STATIC_DRAW);
     gl.bindVertexArray(null);
-    const made = { sheet, mesh: { vao, pos, nrm, loose, uv, count: index.length } };
+    const made = { sheet, mesh: { vao, pos, nrm, loose, uv, indices, count: index.length } };
     pool.push(made);
     return made;
   };
@@ -369,6 +382,11 @@ const build: CreatePress = (options) => {
     const [f] = flights.splice(index, 1);
     if (f.sheet.land < 0) leftShown = Math.max(leftShown, f.leaf);
     else rightShown = Math.min(rightShown, f.leaf);
+    // Leaves skipped by a jump never fly, so only the position can say what lies open.
+    if (!flights.length) {
+      leftShown = at - 1;
+      rightShown = at;
+    }
     free.push({ sheet: f.sheet, mesh: f.mesh });
     dirty = true;
   };
@@ -629,13 +647,6 @@ const build: CreatePress = (options) => {
     turnTo(stop) {
       const next = clamp(stop, 0, lastStop);
       goal = next;
-      if (!ready) {
-        at = next;
-        leftShown = at - 1;
-        rightShown = at;
-        hinge = hingeAt(at);
-        return;
-      }
       wake();
     },
 
@@ -681,12 +692,15 @@ const build: CreatePress = (options) => {
         if (!drag.flight) return;
         drag.flight.lift = false;
         drag.flight.until = 0;
+        // Coming back it lies off screen, so it starts where the finger can already see it.
+        if (!drag.forward) drag.flight.sheet.stand(Math.PI / 2);
         drag.flight.sheet.grip(0.8, clamp((y - top) / ph, 0, 1));
       }
       const flight = drag.flight;
       if (!flight) return;
       if (strip) {
-        drag.cos = (drag.forward ? 1 : -1) + (2 * (x - drag.x0)) / pw;
+        const dx = x - drag.x0;
+        drag.cos = drag.forward ? 1 + (2 * dx) / pw : STRIP_BACK_FROM + ((1 - STRIP_BACK_FROM) * dx) / (STRIP_BACK_REACH * pw);
       } else {
         const r = flight.sheet.radius;
         const low = hinges[flight.leaf + 1] - r * pw;
@@ -706,7 +720,7 @@ const build: CreatePress = (options) => {
       const flick = Math.abs(velocityX) > FLICK;
       const done = current.forward
         ? flick ? velocityX < 0 : current.cos < 0
-        : flick ? velocityX > 0 : current.cos > 0;
+        : flick ? velocityX > 0 : current.cos > (strip ? STRIP_BACK_DONE : 0);
       const onLeft = current.forward === done;
       flight.sheet.swing(onLeft ? -1 : 1, turnSeconds);
       if (done) {
@@ -722,12 +736,13 @@ const build: CreatePress = (options) => {
       if (!ready || drag) return;
       const lifted = flights.find((f) => f.lift);
       if (clientX === null || clientY === null) {
-        if (lifted?.sheet.held) lifted.sheet.letGo();
-        wake();
+        if (lifted?.sheet.held) {
+          lifted.sheet.letGo();
+          wake();
+        }
         return;
       }
       if (at !== goal || turningTowards()) return;
-      wake();
       const [x, y] = clientToView(clientX, clientY);
       const right = strip || x >= hinge;
       const leaf = right ? at : at - 1;
@@ -739,6 +754,7 @@ const build: CreatePress = (options) => {
       const onPage = v >= 0 && v <= 1 && u <= 1;
       if (lifted?.sheet.held && (!turnable || !onPage || reach > 0.55 || lifted.leaf !== leaf)) {
         lifted.sheet.letGo();
+        wake();
       }
       if (turnable && onPage && reach <= 0.55) {
         liftCorner(leaf, right ? 1 : -1, near ? 0.98 : 0.02, 0.05 + 0.09 * (1 - reach / 0.55));
@@ -763,6 +779,8 @@ const build: CreatePress = (options) => {
       at = goal;
       leftShown = at - 1;
       rightShown = at;
+      // A new size can mean a new srcset candidate, so each page waits for its images again.
+      asked = new WeakSet();
       releaseAll();
       measure();
       dirty = true;
@@ -776,6 +794,8 @@ const build: CreatePress = (options) => {
       cancelAnimationFrame(raf);
       document.removeEventListener('visibilitychange', onVisibility);
       canvas.removeEventListener('webglcontextlost', onLost);
+      dprWatch?.removeEventListener('change', onDprChange);
+      paint2d.canvas.remove();
       releaseAll();
       for (const texture of [grain, shade, blank]) gl.deleteTexture(texture);
       gl.deleteVertexArray(quadVao);
@@ -789,6 +809,19 @@ const build: CreatePress = (options) => {
 
   document.addEventListener('visibilitychange', onVisibility);
   canvas.addEventListener('webglcontextlost', onLost);
+
+  // Moving to another display fires no resize.
+  let dprWatch: MediaQueryList | null = null;
+  const watchDpr = () => {
+    dprWatch?.removeEventListener('change', onDprChange);
+    dprWatch = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    dprWatch.addEventListener('change', onDprChange);
+  };
+  const onDprChange = () => {
+    watchDpr();
+    if (readDpr() !== dpr) press.resize();
+  };
+  watchDpr();
 
   measure();
 
@@ -804,7 +837,6 @@ const build: CreatePress = (options) => {
     requestAnimationFrame((now) => {
       if (dead) return;
       draw(now);
-      if (at !== goal) wake();
       schedule();
       onReady();
     });
