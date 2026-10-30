@@ -13,8 +13,8 @@ export default function Navbar() {
     return pathname === path;
   };
 
-  const navLinks = [
-    { href: "/avisteikningar", label: "Avisteikningar" },
+  const navLinks: { href: string; label: string; sub?: { href: string; label: string } }[] = [
+    { href: "/avisteikningar", label: "Avisteikningar", sub: { href: "/avisteikningar/avis", label: "Avis" } },
     { href: "/maleriar", label: "Maleriar" },
     { href: "/barnebokar", label: "Barnebøkar" },
     { href: "/om-meg", label: "Om meg" },
@@ -40,20 +40,36 @@ export default function Navbar() {
           {/* Desktop navigation */}
           <div className="hidden md:flex items-center gap-8">
             {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`relative py-2 text-gray-600 font-light tracking-wide transition-colors hover:text-gray-900 group ${
-                  isActive(link.href) ? 'text-gray-900' : ''
-                }`}
-              >
-                {link.label}
-                <span 
-                  className={`absolute bottom-0 left-0 w-full h-[1px] bg-gray-900 transform origin-left transition-transform duration-300 ${
-                    isActive(link.href) ? 'scale-x-100' : 'scale-x-0 group-hover:scale-x-100'
+              <div key={link.href} className="flex items-baseline gap-2">
+                <Link
+                  href={link.href}
+                  className={`relative py-2 text-gray-600 font-light tracking-wide transition-colors hover:text-gray-900 group ${
+                    isActive(link.href) ? 'text-gray-900' : ''
                   }`}
-                />
-              </Link>
+                >
+                  {link.label}
+                  <span
+                    className={`absolute bottom-0 left-0 w-full h-[1px] bg-gray-900 transform origin-left transition-transform duration-300 ${
+                      isActive(link.href) ? 'scale-x-100' : 'scale-x-0 group-hover:scale-x-100'
+                    }`}
+                  />
+                </Link>
+                {link.sub && (
+                  <Link
+                    href={link.sub.href}
+                    className={`relative py-2 text-sm text-gray-600 font-light tracking-wide transition-colors hover:text-gray-900 group ${
+                      isActive(link.sub.href) ? 'text-gray-900' : ''
+                    }`}
+                  >
+                    {link.sub.label}
+                    <span
+                      className={`absolute bottom-0 left-0 w-full h-[1px] bg-gray-900 transform origin-left transition-transform duration-300 ${
+                        isActive(link.sub.href) ? 'scale-x-100' : 'scale-x-0 group-hover:scale-x-100'
+                      }`}
+                    />
+                  </Link>
+                )}
+              </div>
             ))}
           </div>
 
@@ -85,16 +101,28 @@ export default function Navbar() {
         {isOpen && (
           <div className="md:hidden py-4 border-t border-gray-200/50">
             {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                onClick={() => setIsOpen(false)}
-                className={`block py-3 px-3 my-1 text-gray-600 font-light tracking-wide transition-colors hover:text-gray-900 ${
-                  isActive(link.href) ? 'text-gray-900 border-l-2 border-gray-900' : ''
-                }`}
-              >
-                {link.label}
-              </Link>
+              <div key={link.href}>
+                <Link
+                  href={link.href}
+                  onClick={() => setIsOpen(false)}
+                  className={`block py-3 px-3 my-1 text-gray-600 font-light tracking-wide transition-colors hover:text-gray-900 ${
+                    isActive(link.href) ? 'text-gray-900 border-l-2 border-gray-900' : ''
+                  }`}
+                >
+                  {link.label}
+                </Link>
+                {link.sub && (
+                  <Link
+                    href={link.sub.href}
+                    onClick={() => setIsOpen(false)}
+                    className={`block py-3 pl-8 pr-3 my-1 text-sm text-gray-600 font-light tracking-wide transition-colors hover:text-gray-900 ${
+                      isActive(link.sub.href) ? 'text-gray-900 border-l-2 border-gray-900' : ''
+                    }`}
+                  >
+                    {link.sub.label}
+                  </Link>
+                )}
+              </div>
             ))}
           </div>
         )}
