@@ -15,7 +15,7 @@ export default function Navbar() {
 
   const navLinks: { href: string; label: string; sub?: { href: string; label: string } }[] = [
     { href: "/avisteikningar", label: "Avisteikningar", sub: { href: "/avisteikningar/avis", label: "Avis" } },
-    { href: "/maleriar", label: "Maleriar" },
+    { href: "/maleriar", label: "Maleriar", sub: { href: "/maleriar/galleri", label: "Galleri" } },
     { href: "/barnebokar", label: "Barnebøkar" },
     { href: "/om-meg", label: "Om meg" },
   ];
