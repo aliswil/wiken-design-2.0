@@ -15,8 +15,8 @@ export default function Navbar() {
 
   const navLinks = [
     { href: "/avisteikningar", label: "Avisteikningar" },
-    { href: "/maleriar", label: "Maleriar", sub: { href: "/maleriar/galleri", label: "Galleri" } },
-    { href: "/barnebokar", label: "Barnebøkar" },
+    { href: "/maleriar", label: "Måleri" },
+    { href: "/barnebokar", label: "Barnebøker" },
     { href: "/om-meg", label: "Om meg" },
   ];
 

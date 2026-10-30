@@ -2,7 +2,7 @@ import SanityImage from './SanityImage';
 import type { Painting } from './types';
 
 export function paintingLabel(painting: Painting, total: number) {
-  return `Måleri ${painting.number} av ${total}${painting.title ? `: ${painting.title}` : ', utan tittel'}`;
+  return `Måleri ${painting.number} av ${total}${painting.title ? `: ${painting.title}` : ''}`;
 }
 
 interface PaintingListProps {

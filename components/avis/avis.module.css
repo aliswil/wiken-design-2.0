@@ -1,0 +1,1061 @@
+/* Everything is sized from --pw (spread) or --sw (strip), so the paper scales as one piece. */
+
+.reader {
+  --nav: 81px;
+  --controls: 64px;
+  --viewport-h: 100vh;
+
+  /* Spread */
+  --ph: max(
+    460px,
+    min(
+      calc(var(--viewport-h) - var(--nav) - var(--controls) - 32px),
+      calc((100vw - 64px) / 2 / 0.86)
+    )
+  );
+  --pw: calc(var(--ph) * 0.86);
+
+  /* Strip */
+  --sh: max(480px, calc(var(--viewport-h) - var(--nav) - var(--controls)));
+  /* From --sh, floor included: zooming in or turning a phone must not shrink the column and its type. */
+  --sw: min(calc(100vw - 14px), calc(var(--sh) * 0.62));
+  --su: calc(var(--sw) / 24);
+
+  position: relative;
+  width: 100%;
+}
+
+@supports (height: 100svh) {
+  .reader {
+    --viewport-h: 100svh;
+  }
+}
+
+@media (min-width: 768px) {
+  .reader {
+    --nav: 113px;
+  }
+}
+
+.sheets {
+  --paper: #efe9da;
+  --ink: #1b1913;
+  --ink-soft: #4d483b;
+  --hair: rgba(27, 25, 19, 0.42);
+  --serif: var(--font-avis), Georgia, 'Times New Roman', serif;
+
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: calc(var(--ph) + 32px);
+  overscroll-behavior-x: contain;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(27, 25, 19, 0.25) transparent;
+}
+
+/* The reader's controls replace the scrollbar; without scripts it stays. */
+@media (scripting: enabled) {
+  .sheets {
+    scrollbar-width: none;
+  }
+}
+
+.spread {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+}
+
+/* ---------- Page ---------- */
+
+.page {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr) minmax(4.3em, auto);
+  width: var(--pw);
+  height: var(--ph);
+  padding: 1.6em 1.25em 3.8em;
+  font-family: var(--serif);
+  font-size: calc(var(--pw) / 38);
+  line-height: 1.2;
+  color: var(--ink);
+  background-color: var(--paper);
+  box-shadow: 0 0.1em 0.3em rgba(62, 52, 30, 0.14), 0 0.5em 0.9em -0.5em rgba(62, 52, 30, 0.42);
+}
+
+/* Keeps each page's shadow from falling on the page beside it. */
+.spread > .page:first-child:not(:last-child) {
+  clip-path: inset(-4em 0 -4em -4em);
+}
+
+.spread > .page:last-child:not(:first-child) {
+  clip-path: inset(-4em -4em -4em 0);
+}
+
+/* Old fold and spine, for the DOM paper only: the press draws its own. */
+.page::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      180deg,
+      transparent calc(50% - 0.5em),
+      rgba(62, 52, 30, 0.05) calc(50% - 0.5px),
+      rgba(255, 255, 255, 0.06) calc(50% + 0.5px),
+      transparent calc(50% + 0.5em)
+    ),
+    var(--spine, none);
+}
+
+.spread > .page:first-child {
+  --spine: linear-gradient(270deg, rgba(62, 52, 30, 0.13), rgba(62, 52, 30, 0.035) 0.8em, transparent 2.6em);
+}
+
+.spread > .page:last-child:not(:first-child) {
+  --spine: linear-gradient(90deg, rgba(62, 52, 30, 0.13), rgba(62, 52, 30, 0.035) 0.8em, transparent 2.6em);
+}
+
+.spread > .page.front {
+  --spine: linear-gradient(90deg, rgba(62, 52, 30, 0.08), transparent 1.2em);
+}
+
+.spread > .page.back {
+  --spine: linear-gradient(270deg, rgba(62, 52, 30, 0.08), transparent 1.2em);
+}
+
+/* ---------- Running head ---------- */
+
+.folio {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-bottom: 0.45em;
+  margin-bottom: 1.05em;
+  border-bottom: 1px solid var(--hair);
+  font-size: 1em;
+  color: var(--ink-soft);
+}
+
+.page[data-outer='left'] > .folio {
+  flex-direction: row-reverse;
+}
+
+.folio > span:first-child {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.78em;
+}
+
+.folioNumber {
+  font-size: 1.15em;
+  color: var(--ink);
+  font-variant-numeric: lining-nums;
+}
+
+/* ---------- Masthead ---------- */
+
+.masthead {
+  grid-column: 1 / -1;
+  margin-bottom: 0.65em;
+  text-align: center;
+}
+
+.masthead h1 {
+  padding-bottom: 0.08em;
+  font-size: 5.5em;
+  font-weight: 400;
+  line-height: 1.04;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+  border-bottom: 0.028em solid var(--ink);
+}
+
+.dateline {
+  display: flex;
+  justify-content: space-between;
+  gap: 1em;
+  margin-top: 0.14em;
+  padding: 0.48em 0.1em 0.5em;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--hair);
+  color: var(--ink-soft);
+  font-size: 0.8em;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ---------- Figures ---------- */
+
+.fig {
+  grid-row: 2 / 4;
+  display: grid;
+  grid-template-rows: subgrid;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding-inline: 0 0.6em;
+}
+
+.fig + .fig {
+  padding-inline: 0.6em 0;
+  border-left: 1px solid var(--hair);
+}
+
+/* A size container is its own stacking context, so the paper has to be inside it for multiply. */
+.plate {
+  container-type: size;
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-end;
+  min-width: 0;
+  min-height: 0;
+  background-color: var(--paper);
+}
+
+.plate a {
+  flex: none;
+  display: block;
+  width: min(100cqw, calc(100cqh * var(--r)));
+  aspect-ratio: var(--r);
+  cursor: zoom-in;
+}
+
+.plate a:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.plate img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  mix-blend-mode: multiply;
+  user-select: none;
+}
+
+.fig figcaption {
+  min-width: 0;
+  padding-top: 0.5em;
+}
+
+.fig h2 {
+  font-size: 1.4em;
+  font-weight: 400;
+  line-height: 1.16;
+  text-wrap: pretty;
+  overflow-wrap: break-word;
+}
+
+.fig figcaption p {
+  margin-top: 0.3em;
+  font-size: 0.95em;
+  line-height: 1.3;
+  color: var(--ink-soft);
+}
+
+/* ---------- Layouts ---------- */
+
+.front {
+  grid-template-rows: auto minmax(0, 1fr) minmax(2.4em, auto);
+  padding: 1.1em 1.6em 1.1em;
+}
+
+.lead {
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-bottom: 1.5em;
+}
+
+.lead[data-outer='left'] {
+  grid-template-columns: minmax(0, 21.4em) minmax(0, 1fr);
+}
+
+.lead[data-outer='right'] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 21.4em);
+}
+
+.lead .fig {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+}
+
+.lead .plate {
+  flex: 1;
+}
+
+.headlined figcaption {
+  order: -1;
+  padding: 0 0 0.7em;
+}
+
+.headlined h2 {
+  font-size: var(--headline);
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.008em;
+  text-wrap: balance;
+}
+
+.solo {
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-bottom: 1.5em;
+}
+
+.solo .fig {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 22.4em) minmax(0, 1fr);
+  padding: 0;
+  column-gap: 1.1em;
+}
+
+.solo[data-outer='right'] .fig {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 22.4em);
+}
+
+.solo[data-outer='right'] .plate {
+  order: 2;
+  justify-content: flex-end;
+}
+
+.solo figcaption {
+  align-self: end;
+  padding-top: 0.7em;
+  border-top: 1px solid var(--hair);
+}
+
+.solo h2 {
+  font-size: 1.9em;
+  line-height: 1.08;
+}
+
+.wide {
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-bottom: 1.5em;
+}
+
+.wide .fig {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  grid-template-rows: auto auto;
+  align-content: center;
+  padding: 0 0 3em;
+}
+
+.wide .plate {
+  height: calc(35.5em / var(--r));
+}
+
+.wide figcaption {
+  padding-top: 0.75em;
+}
+
+.wide h2 {
+  font-size: 2.1em;
+  line-height: 1.08;
+}
+
+/* A front page with one drawing borrows the solo or wide layout under its masthead. */
+.front.solo[data-outer='right'] .fig {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 19em);
+}
+
+.front.wide .plate {
+  height: calc(34.8em / var(--r));
+}
+
+.blank {
+  grid-template-rows: auto;
+  align-content: start;
+}
+
+/* ---------- Back page ---------- */
+
+.back {
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-bottom: 1.5em;
+}
+
+.colophon {
+  grid-column: 1 / -1;
+  align-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 2.4em;
+  text-align: center;
+}
+
+.colophonName {
+  width: 100%;
+  padding-bottom: 0.14em;
+  font-size: 3.5em;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  border-bottom: 0.04em solid var(--ink);
+}
+
+.colophonLine {
+  width: 100%;
+  margin-top: 0.2em;
+  padding: 0.48em 0 0.5em;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--hair);
+  color: var(--ink-soft);
+  font-size: 0.8em;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.colophonLinks {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 1em;
+}
+
+.colophonLinks a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: 0.6em;
+  font-size: 1.2em;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.colophonLinks a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.colophonLinks a:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ---------- Strip: the paper folded down to one column ---------- */
+/* Keep in sync with STRIP_QUERY in stripQuery.ts. */
+
+@media (max-width: 819px), (max-aspect-ratio: 1/1) {
+  .sheets {
+    height: var(--sh);
+    padding-inline: calc((100% - var(--sw)) / 2);
+  }
+
+  .spread,
+  .page {
+    display: contents;
+  }
+
+  .page:not(.back)::after {
+    content: none;
+  }
+
+  .spread > .page.back {
+    --spine: none;
+  }
+
+  .folio {
+    display: none;
+  }
+
+  .masthead {
+    position: absolute;
+    top: 0;
+    left: calc((100% - var(--sw)) / 2);
+    z-index: 1;
+    width: var(--sw);
+    height: calc(var(--su) * 7);
+    margin: 0;
+    padding: calc(var(--su) * 0.8) calc(var(--su) * 0.75) 0;
+    font-size: var(--su);
+  }
+
+  .masthead h1 {
+    font-size: 3.56em;
+  }
+
+  .dateline {
+    font-size: 0.68em;
+    letter-spacing: 0.08em;
+  }
+
+  .fig,
+  .fig + .fig,
+  .lead .fig,
+  .solo .fig,
+  .solo[data-outer='right'] .fig,
+  .front.solo[data-outer='right'] .fig,
+  .wide .fig {
+    position: relative;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    width: var(--sw);
+    height: var(--sh);
+    padding: calc(var(--su) * 0.75);
+    font-size: var(--su);
+    background-color: var(--paper);
+    border-left: 1px solid var(--hair);
+    scroll-snap-align: center;
+    scroll-snap-stop: always;
+  }
+
+  .fig::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      transparent calc(50% - 0.5em),
+      rgba(62, 52, 30, 0.05) calc(50% - 0.5px),
+      rgba(255, 255, 255, 0.06) calc(50% + 0.5px),
+      transparent calc(50% + 0.5em)
+    );
+  }
+
+  .front .fig:first-of-type {
+    padding-top: calc(var(--su) * 7.4);
+    border-left: 0;
+  }
+
+  .plate,
+  .wide .plate,
+  .front.wide .plate,
+  .solo[data-outer='right'] .plate {
+    order: 0;
+    flex: 1;
+    height: auto;
+    justify-content: center;
+  }
+
+  /* Short drawings sit in the middle of the column with their caption, not apart from it. */
+  .wide .fig {
+    justify-content: center;
+  }
+
+  .wide .plate,
+  .front.wide .plate {
+    flex: none;
+    height: calc((var(--sw) - var(--su) * 1.5) / var(--r));
+  }
+
+  .headlined figcaption,
+  .solo figcaption,
+  .wide figcaption,
+  .fig figcaption {
+    order: 0;
+    align-self: auto;
+    flex: none;
+    min-height: 3.6em;
+    padding: 0.55em 0 0;
+    text-align: center;
+    border-top: 0;
+  }
+
+  .fig h2,
+  .headlined h2,
+  .solo h2,
+  .wide h2 {
+    font-size: 1.3em;
+    font-weight: 400;
+    line-height: 1.14;
+    letter-spacing: 0;
+    text-wrap: balance;
+  }
+
+  .page.back {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    width: var(--sw);
+    height: var(--sh);
+    padding: calc(var(--su) * 0.75);
+    font-size: var(--su);
+    border-left: 1px solid var(--hair);
+    box-shadow: none;
+    scroll-snap-align: center;
+    scroll-snap-stop: always;
+  }
+
+  .colophon {
+    align-self: stretch;
+  }
+
+  .colophonName {
+    font-size: 3.7em;
+  }
+
+  .colophonLine {
+    font-size: 0.68em;
+  }
+}
+
+/* ---------- Stage: DOM below, canvas over it, ring on top ---------- */
+
+.stage {
+  position: relative;
+  width: 100%;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.reader[data-webgl] .stage {
+  touch-action: pan-y pinch-zoom;
+}
+
+/* Still there for hit testing, focus and screen readers. */
+.reader[data-webgl] .sheets {
+  opacity: 0;
+  overflow-x: hidden;
+  scroll-snap-type: none;
+  cursor: grab;
+  touch-action: pan-y pinch-zoom;
+  user-select: none;
+  /* Neighbouring sheets the canvas doesn't draw dissolve once it is opaque, rather than pop. */
+  transition: opacity 160ms ease;
+}
+
+.reader[data-webgl] .sheets:active {
+  cursor: grabbing;
+}
+
+.ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  display: none;
+  pointer-events: none;
+}
+
+.ring[data-show] {
+  display: block;
+  border: 2px solid #1b1913;
+  box-shadow: 0 0 0 2px rgba(245, 243, 237, 0.9);
+}
+
+/* ---------- Controls: the site's own type, not the paper's ---------- */
+
+.controls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: var(--controls);
+  padding: 10px 16px;
+  color: #171717;
+}
+
+.turn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgba(23, 23, 23, 0.28);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.turn:hover:not(:disabled) {
+  background-color: rgba(23, 23, 23, 0.07);
+}
+
+.turn:disabled {
+  color: rgba(23, 23, 23, 0.32);
+  border-color: rgba(23, 23, 23, 0.14);
+  cursor: default;
+}
+
+.turn:focus-visible,
+.scrub:focus-visible {
+  outline: 2px solid #171717;
+  outline-offset: 2px;
+}
+
+.scrub {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 420px;
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.scrub::-webkit-slider-runnable-track {
+  height: 1px;
+  background: rgba(23, 23, 23, 0.5);
+}
+
+.scrub::-moz-range-track {
+  height: 1px;
+  background: rgba(23, 23, 23, 0.5);
+}
+
+.scrub::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  margin-top: -8.5px;
+  background: #171717;
+  border: 0;
+  border-radius: 50%;
+  -webkit-appearance: none;
+}
+
+.scrub::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: #171717;
+  border: 0;
+  border-radius: 50%;
+}
+
+.label {
+  flex: none;
+  min-width: 8.5em;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: #47473f;
+  white-space: nowrap;
+}
+
+.hint {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  z-index: 3;
+  margin-bottom: 8px;
+  padding: 4px 12px;
+  font-size: 0.8125rem;
+  color: #f5f3ed;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  text-align: center;
+  pointer-events: none;
+  background: rgba(23, 23, 23, 0.82);
+  border-radius: 14px;
+  transform: translateX(-50%);
+}
+
+/* Strip: the pill clears a two-line caption. */
+@media (max-width: 819px), (max-aspect-ratio: 1/1) {
+  .hint {
+    margin-bottom: calc(var(--su) * 4.4 + 8px);
+  }
+}
+
+/* Forty-seven stops need the width more than the row needs its air. */
+@media (max-width: 419px) {
+  .controls {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+}
+
+/* Below this the label would leave under 2 px per stop, so it takes its own row. */
+@media (max-width: 359px) {
+  .reader {
+    --controls: 88px;
+  }
+
+  .controls {
+    flex-wrap: wrap;
+    align-content: center;
+    row-gap: 3px;
+  }
+
+  .label {
+    flex-basis: 100%;
+    text-align: center;
+  }
+}
+
+/* ---------- Message when there is no paper to show ---------- */
+
+.notice {
+  max-width: 34rem;
+  min-height: 60vh;
+  margin-inline: auto;
+  padding: 18vh 24px 0;
+  font-family: var(--font-avis), Georgia, 'Times New Roman', serif;
+  text-align: center;
+  color: #1b1913;
+}
+
+.notice h1 {
+  font-size: 2.5rem;
+  font-weight: 400;
+  line-height: 1.1;
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid rgba(27, 25, 19, 0.42);
+}
+
+.notice p {
+  margin-top: 1em;
+  font-size: 1.125rem;
+  line-height: 1.5;
+  color: #4d483b;
+}
+
+/* ---------- Cutting: a clipping on a dimmed table ---------- */
+
+.cutting {
+  --gap: 16px;
+  --pad: 20px;
+  --text: 15rem;
+  --edge: 72px;
+  --viewport-h: 100vh;
+  --image-h: calc(var(--viewport-h) - 2 * var(--gap) - 2 * var(--pad));
+
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  color: #1b1913;
+  background: transparent;
+  border: 0;
+  filter: drop-shadow(0 18px 28px rgba(20, 16, 8, 0.45));
+  touch-action: pan-y pinch-zoom;
+}
+
+@supports (height: 100dvh) {
+  .cutting {
+    --viewport-h: 100dvh;
+  }
+}
+
+.cutting[open] {
+  display: grid;
+  place-items: center;
+}
+
+.cutting::backdrop {
+  background: rgba(46, 40, 30, 0.84);
+}
+
+.cuttingPaper {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: end;
+  column-gap: 24px;
+  width: fit-content;
+  padding: var(--pad);
+  background-color: #efe9da;
+}
+
+/* Sized from the drawing's own ratio, so that the paper fits a wide drawing as well as a tall one. */
+.cuttingImage {
+  display: block;
+  width: min(
+    calc(100vw - 2 * var(--edge) - 2 * var(--pad) - var(--text) - 24px),
+    calc(var(--image-h) * var(--r))
+  );
+  height: auto;
+  object-fit: contain;
+  mix-blend-mode: multiply;
+  user-select: none;
+}
+
+.cuttingText {
+  max-width: var(--text);
+  padding-bottom: 2px;
+  font-family: var(--font-avis), Georgia, 'Times New Roman', serif;
+}
+
+.cuttingText h2 {
+  font-size: 1.75rem;
+  font-weight: 400;
+  line-height: 1.12;
+  text-wrap: pretty;
+}
+
+.cuttingText p {
+  margin-top: 0.6em;
+  font-size: 1.0625rem;
+  line-height: 1.35;
+  color: #4d483b;
+}
+
+.cuttingText .cuttingMeta {
+  margin-top: 1em;
+  padding-top: 0.6em;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #4d483b;
+  border-top: 1px solid rgba(27, 25, 19, 0.42);
+}
+
+.cuttingText .cuttingMeta:first-child {
+  margin-top: 0;
+}
+
+.cuttingClose,
+.cuttingPrev,
+.cuttingNext {
+  position: absolute;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: #f5f3ed;
+  background: rgba(46, 40, 30, 0.55);
+  border: 1px solid rgba(245, 243, 237, 0.6);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.cuttingClose:hover,
+.cuttingPrev:hover:not(:disabled),
+.cuttingNext:hover:not(:disabled) {
+  background: rgba(245, 243, 237, 0.18);
+}
+
+.cuttingClose:focus-visible,
+.cuttingPrev:focus-visible,
+.cuttingNext:focus-visible {
+  outline: 2px solid #f5f3ed;
+  outline-offset: 2px;
+}
+
+.cuttingPrev:disabled,
+.cuttingNext:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cuttingClose {
+  top: 14px;
+  right: 14px;
+}
+
+.cuttingPrev {
+  top: calc(50% - 22px);
+  left: 14px;
+}
+
+.cuttingNext {
+  top: calc(50% - 22px);
+  right: 14px;
+}
+
+@media (max-width: 819px), (max-aspect-ratio: 1/1) {
+  .cutting {
+    --pad: 8px;
+    --image-h: max(220px, calc(var(--viewport-h) - 2 * 58px - 2 * var(--pad) - 4.5rem));
+    overflow-y: auto;
+  }
+
+  .cutting[open] {
+    place-items: safe center;
+  }
+
+  .cuttingPaper {
+    grid-template-columns: auto;
+    row-gap: 12px;
+    max-width: calc(100vw - 16px);
+  }
+
+  .cuttingImage {
+    width: min(calc(100vw - 16px - 2 * var(--pad)), calc(var(--image-h) * var(--r)));
+  }
+
+  /* The drawing sets the paper's width and the text wraps to it. */
+  .cuttingText {
+    width: 0;
+    min-width: 100%;
+  }
+
+  .cuttingText h2 {
+    font-size: 1.375rem;
+  }
+
+  .cuttingText .cuttingMeta {
+    white-space: normal;
+  }
+
+  .cuttingPrev,
+  .cuttingNext {
+    top: auto;
+    bottom: 11px;
+  }
+}
+
+/* Too short to stack text under the drawing: back to side by side, phone or zoomed window. */
+@media (max-height: 500px) and (min-aspect-ratio: 1/1) and (min-width: 400px) {
+  .cutting {
+    --pad: 14px;
+    --text: min(15rem, 34vw);
+    --edge: 58px;
+    --image-h: max(160px, calc(var(--viewport-h) - 2 * 16px - 2 * var(--pad)));
+  }
+
+  .cuttingPaper {
+    grid-template-columns: auto auto;
+  }
+
+  .cuttingImage {
+    width: min(
+      calc(100vw - 2 * var(--edge) - 2 * var(--pad) - var(--text) - 24px),
+      calc(var(--image-h) * var(--r))
+    );
+  }
+
+  .cuttingText {
+    width: auto;
+    min-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn,
+  .cuttingClose,
+  .cuttingPrev,
+  .cuttingNext {
+    transition: none;
+  }
+}
