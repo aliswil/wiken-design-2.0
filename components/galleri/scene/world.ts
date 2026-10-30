@@ -18,6 +18,9 @@ import type { Painting } from '../types';
 import { toWallPigment, type Rgb } from './colors';
 import { DOOR_HEIGHT, DOOR_WIDTH, FloorPlan } from './floorPlan';
 import {
+  MAX_FISH,
+  DECK_FRAGMENT,
+  DECK_VERTEX,
   FRAME_FRAGMENT,
   MAX_RIPPLES,
   PAINTING_FRAGMENT,
@@ -37,7 +40,10 @@ const MAX_PAINTING_HEIGHT = 3.1;
 const MAX_PAINTING_WIDTH = 2.7;
 const FRAME_WIDTH = 0.035;
 const WALL_CLEARANCE = 0.06;
-const BARE_WALL: Rgb = [0.86, 0.87, 0.82];
+const BARE_WALL: Rgb = [0.93, 0.92, 0.88];
+const DECK_TOP = 0.2;
+const DECK_THICKNESS = 0.12;
+const DOOR_FRAME_WIDTH = 0.09;
 
 export type SharedUniforms = Record<'uPaper' | 'uResolution' | 'uEdge', IUniform>;
 
@@ -83,7 +89,7 @@ export function hangPaintings(
 
   for (let room = 0; room < roomCount; room++) {
     const count = perRoom + (room < extra ? 1 : 0);
-    const spots = plan.hangingSpots(room);
+    const spots = plan.hangingSpots(room, count);
     for (let i = 0; i < count; i++) {
       const painting = paintings[next++];
       const { wall, along } = spots[i % spots.length];
@@ -156,7 +162,7 @@ function roomTones(plan: FloorPlan, hung: HungPainting[]) {
     const pigments = hung.filter((item) => item.room === room).map((item) => toWallPigment(item.painting.palette[0]));
     if (pigments.length === 0) return BARE_WALL;
     const sum = pigments.reduce<Rgb>((total, p) => [total[0] + p[0], total[1] + p[1], total[2] + p[2]], [0, 0, 0]);
-    return mixRgb(BARE_WALL, [sum[0] / pigments.length, sum[1] / pigments.length, sum[2] / pigments.length], 0.85);
+    return mixRgb(BARE_WALL, [sum[0] / pigments.length, sum[1] / pigments.length, sum[2] / pigments.length], 0.8);
   });
 }
 
@@ -235,8 +241,8 @@ export function buildWalls(plan: FloorPlan, hung: HungPainting[], shared: Shared
   plan.doors.forEach((door, index) => {
     const seed = 700 + index * 11.7;
     const tone = mixRgb(tones[door.rooms[0]], tones[door.rooms[1]], 0.5);
-    const reveal: Rgb = [tone[0] * 0.8, tone[1] * 0.8, tone[2] * 0.8];
-    const soffit: Rgb = [tone[0] * 0.62, tone[1] * 0.62, tone[2] * 0.62];
+    const reveal: Rgb = [tone[0] * 0.88, tone[1] * 0.88, tone[2] * 0.88];
+    const soffit: Rgb = [tone[0] * 0.72, tone[1] * 0.72, tone[2] * 0.72];
     const depth = 0.25;
     const half = DOOR_WIDTH / 2;
     const place = (across: number, side: number, y: number): [number, number, number] =>
@@ -277,6 +283,54 @@ export function buildWalls(plan: FloorPlan, hung: HungPainting[], shared: Shared
   return new Mesh(builder.build(), material);
 }
 
+/** The boardwalk: one slab per stretch, with the boards drawn by the shader. */
+export function buildDeck(plan: FloorPlan, shared: SharedUniforms) {
+  const pieces = plan.deck.map((piece) => {
+    const box = new BoxGeometry(piece.x1 - piece.x0, DECK_THICKNESS, piece.z1 - piece.z0);
+    box.translate((piece.x0 + piece.x1) / 2, DECK_TOP - DECK_THICKNESS / 2, (piece.z0 + piece.z1) / 2);
+    const acrossX = new Float32Array(box.attributes.position.count).fill(piece.walkAlong === 'x' ? 1 : 0);
+    box.setAttribute('aAcrossX', new BufferAttribute(acrossX, 1));
+    return box;
+  });
+  const material = new ShaderMaterial({
+    vertexShader: DECK_VERTEX,
+    fragmentShader: DECK_FRAGMENT,
+    uniforms: { ...shared },
+  });
+  return new Mesh(mergeGeometries(pieces), material);
+}
+
+/** Slim oak mouldings round each door opening, on both faces of the wall. */
+export function buildDoorFrames(plan: FloorPlan, shared: SharedUniforms) {
+  const pieces: BoxGeometry[] = [];
+  const half = DOOR_WIDTH / 2 + DOOR_FRAME_WIDTH / 2;
+  const depth = 0.03;
+  const place = (door: (typeof plan.doors)[number], across: number, side: number, y: number, width: number, height: number) => {
+    const box =
+      door.crossing === 'x' ? new BoxGeometry(depth, height, width) : new BoxGeometry(width, height, depth);
+    box.translate(
+      door.crossing === 'x' ? door.plane + across : door.center + side,
+      y,
+      door.crossing === 'x' ? door.center + side : door.plane + across,
+    );
+    pieces.push(box);
+  };
+  for (const door of plan.doors) {
+    for (const across of [-0.25, 0.25]) {
+      const top = DOOR_HEIGHT + DOOR_FRAME_WIDTH;
+      place(door, across, -half, top / 2, DOOR_FRAME_WIDTH, top);
+      place(door, across, half, top / 2, DOOR_FRAME_WIDTH, top);
+      place(door, across, 0, DOOR_HEIGHT + DOOR_FRAME_WIDTH / 2, DOOR_WIDTH, DOOR_FRAME_WIDTH);
+    }
+  }
+  const material = new ShaderMaterial({
+    vertexShader: WORLD_VERTEX,
+    fragmentShader: FRAME_FRAGMENT,
+    uniforms: { ...shared, uColor: { value: new Color(0.66, 0.5, 0.33) } },
+  });
+  return new Mesh(mergeGeometries(pieces), material);
+}
+
 export function buildWater(plan: FloorPlan, shared: SharedUniforms, reflection: Texture) {
   const { x0, x1, z0, z1 } = plan.bounds;
   const geometry = new PlaneGeometry(x1 - x0, z1 - z0).rotateX(-Math.PI / 2).translate((x0 + x1) / 2, 0, (z0 + z1) / 2);
@@ -290,6 +344,8 @@ export function buildWater(plan: FloorPlan, shared: SharedUniforms, reflection: 
       uTime: { value: 0 },
       uRippleCount: { value: MAX_RIPPLES },
       uRipples: { value: Array.from({ length: MAX_RIPPLES }, () => new Vector4()) },
+      uFishCount: { value: 0 },
+      uFish: { value: Array.from({ length: MAX_FISH }, () => new Vector4()) },
     },
   });
   return new Mesh(geometry, material);

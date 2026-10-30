@@ -2,6 +2,7 @@ import {
   Color,
   ColorManagement,
   Frustum,
+  InstancedMesh,
   LinearFilter,
   Matrix4,
   PerspectiveCamera,
@@ -16,12 +17,15 @@ import {
   type ShaderMaterial,
 } from 'three';
 import type { Painting, ScreenRect } from '../types';
-import { Boat, EYE_HEIGHT, yawTowards, type Facing } from './boat';
 import { hexToRgb } from './colors';
-import { FloorPlan, WALL_MARGIN, type Point } from './floorPlan';
+import { FloorPlan, type Point } from './floorPlan';
 import { MAX_RIPPLES } from './shaders';
+import { RoomLife } from './life';
 import { createToneTexture, PaintingTextures } from './textures';
+import { EYE_HEIGHT, Walker, yawTowards, type Facing } from './walker';
 import {
+  buildDeck,
+  buildDoorFrames,
   buildFrames,
   buildShadows,
   buildWalls,
@@ -34,9 +38,13 @@ import {
 const PAPER = '#f5f3ed';
 const RIPPLE_LIFE = 5.5;
 const AGITATION_DECAY = 1.1;
-const WAKE_SPACING = 0.75;
+const WAKE_SPACING = 1;
 const TAP_SLOP = 8;
 const WHEEL_PUSH = 0.0035;
+const LIFE_FIRST_EVENT = 4500;
+const LIFE_MIN_REST = 9000;
+const LIFE_EXTRA_REST = 13000;
+const LIFE_IDLE_LIMIT = 120000;
 const QUALITY_LEVELS = [
   { pixelRatio: 1.75, reflection: 0.5, ripples: MAX_RIPPLES },
   { pixelRatio: 1.25, reflection: 0.5, ripples: 6 },
@@ -44,8 +52,8 @@ const QUALITY_LEVELS = [
 ];
 
 export interface GalleryScene {
-  /** Glide to a painting. */
-  sailTo(index: number): void;
+  /** Walk to a painting. */
+  walkToPainting(index: number): void;
   /** Stand in front of a painting without drawing anything; the room is out of sight. */
   placeAt(index: number): void;
   /** Where a painting is on screen, in viewport pixels. Null if it is not in view. */
@@ -66,7 +74,7 @@ interface SceneOptions {
   onFailure(): void;
 }
 
-const MOVE_KEYS: Record<string, keyof BoatKeys> = {
+const MOVE_KEYS: Record<string, keyof MoveKeys> = {
   ArrowUp: 'forward',
   KeyW: 'forward',
   ArrowDown: 'back',
@@ -77,7 +85,7 @@ const MOVE_KEYS: Record<string, keyof BoatKeys> = {
   KeyD: 'right',
 };
 
-interface BoatKeys {
+interface MoveKeys {
   forward: boolean;
   back: boolean;
   left: boolean;
@@ -121,7 +129,14 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
   const hung = hangPaintings(plan, paintings, shared, createToneTexture);
   const water = buildWater(plan, shared, reflectionTarget.texture) as Mesh<never, ShaderMaterial>;
   const shadows = buildShadows(hung);
-  scene.add(buildWalls(plan, hung, shared), buildFrames(hung, shared), shadows, water);
+  scene.add(
+    buildWalls(plan, hung, shared),
+    buildFrames(hung, shared),
+    buildDoorFrames(plan, shared),
+    buildDeck(plan, shared),
+    shadows,
+    water,
+  );
   hung.forEach((item) => scene.add(item.mesh));
   const paintingMeshes = hung.map((item) => item.mesh);
 
@@ -145,56 +160,56 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
   let height = 1;
   let currentIndex = -1;
   let moved = false;
+  let lifeTimer = 0;
+  let lastInteraction = performance.now();
 
-  const keys: BoatKeys = { forward: false, back: false, left: false, right: false };
+  const keys: MoveKeys = { forward: false, back: false, left: false, right: false };
   const frustum = new Frustum();
   const projection = new Matrix4();
   const cameraPosition = new Vector3();
 
+  /** The place on the path with the best view of a painting, and the look that goes with it. */
   function viewingPose(item: HungPainting): Point & Facing {
-    const room = plan.rooms[item.room];
     const halfVertical = (camera.fov * Math.PI) / 360;
     const halfHorizontal = Math.atan(Math.tan(halfVertical) * camera.aspect);
     const fitHeight = item.height / (0.46 * 2 * Math.tan(halfVertical));
     const fitWidth = item.width / (0.78 * 2 * Math.tan(halfHorizontal));
-    const available = (item.normal.x !== 0 ? room.x1 - room.x0 : room.z1 - room.z0) - WALL_MARGIN;
-    const distance = Math.min(available, Math.max(1.8, fitHeight, fitWidth));
-    const spot = plan.nearestClear(item.center.x + item.normal.x * distance, item.center.z + item.normal.z * distance);
+    const ideal = Math.max(1.8, fitHeight, fitWidth);
+    const spot = plan.nearestClear(item.center.x + item.normal.x * ideal, item.center.z + item.normal.z * ideal);
+    const distance = Math.hypot(item.center.x - spot.x, item.center.z - spot.z);
     return {
       ...spot,
-      yaw: yawTowards(-item.normal.x, -item.normal.z),
+      yaw: yawTowards(item.center.x - spot.x, item.center.z - spot.z),
       // Looks a little below the picture's centre, so its reflection stays in view.
       pitch: Math.atan2(item.center.y - EYE_HEIGHT, distance) - 0.16,
     };
   }
 
-  /** The first view: across the first room with its painting ahead and the door to the next room in sight. */
+  /** The first view: from the path, over the water, with a painting ahead and the next door in sight. */
   function openingPose(distanceBack: number): Point & Facing {
     const room = plan.rooms[0];
-    const first = hung[0];
-    const x = room.x0 + 1.6 - distanceBack * 0.25;
-    const z = room.z1 - 1.5 + distanceBack * 0.1;
+    const middle = { x: (room.x0 + room.x1) / 2, z: (room.z0 + room.z1) / 2 };
+    const spot = plan.nearestClear(middle.x, middle.z + 2.6 + distanceBack);
     const narrow = host.clientWidth < host.clientHeight;
-    const target = narrow
-      ? { x: first.center.x, z: first.center.z }
-      : { x: room.x1 - 0.8, z: room.z0 + (room.z1 - room.z0) * 0.32 };
-    return { ...plan.nearestClear(x, z), yaw: yawTowards(target.x - x, target.z - z), pitch: 0.05 };
+    const target = narrow ? hung[0].center : { x: middle.x + 1.5, z: room.z0 };
+    return { ...spot, yaw: yawTowards(target.x - spot.x, target.z - spot.z), pitch: -0.12 };
   }
 
-  /** Glide along the water to a place, then turn the way `face` says. */
-  function sailTo(target: Point, face: Facing | null, smoothTime?: number) {
-    boat.follow(plan.route({ x: boat.x, z: boat.z }, target), face, smoothTime);
+  /** Walk along the path to a place, then turn the way `face` says. */
+  function walkTo(target: Point, face: Facing | null, smoothTime?: number) {
+    walker.follow(plan.route({ x: walker.x, z: walker.z }, target), face, smoothTime);
   }
 
-  const boat = new Boat(plan, openingPose(reducedMotion ? 0 : 1.6));
+  const walker = new Walker(plan, openingPose(reducedMotion ? 0 : 1));
+  const life = new RoomLife(plan, scene, shared, water.material.uniforms, addRipple);
   const textures = new PaintingTextures(hung, renderer, touch, reducedMotion, requestFrame);
 
   function applyCameraPose() {
-    camera.position.set(boat.x, EYE_HEIGHT, boat.z);
-    camera.rotation.set(boat.pitch, boat.yaw, 0, 'YXZ');
+    camera.position.set(walker.x, EYE_HEIGHT, walker.z);
+    camera.rotation.set(walker.pitch, walker.yaw, 0, 'YXZ');
     camera.updateMatrixWorld();
-    mirrorCamera.position.set(boat.x, -EYE_HEIGHT, boat.z);
-    mirrorCamera.rotation.set(-boat.pitch, boat.yaw, 0, 'YXZ');
+    mirrorCamera.position.set(walker.x, -EYE_HEIGHT, walker.z);
+    mirrorCamera.rotation.set(-walker.pitch, walker.yaw, 0, 'YXZ');
     mirrorCamera.updateMatrixWorld();
   }
 
@@ -241,12 +256,12 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
   function reportCurrent() {
     let best = 0;
     let bestScore = Infinity;
-    const lookX = -Math.sin(boat.yaw);
-    const lookZ = -Math.cos(boat.yaw);
-    const room = plan.roomAt(boat.x, boat.z);
+    const lookX = -Math.sin(walker.yaw);
+    const lookZ = -Math.cos(walker.yaw);
+    const room = plan.roomAt(walker.x, walker.z);
     hung.forEach((item, index) => {
-      const dx = item.center.x - boat.x;
-      const dz = item.center.z - boat.z;
+      const dx = item.center.x - walker.x;
+      const dz = item.center.z - walker.z;
       const distance = Math.hypot(dx, dz);
       const ahead = (dx * lookX + dz * lookZ) / (distance || 1);
       const score = distance + (1 - ahead) * 14 + (item.room === room ? 0 : 8);
@@ -265,10 +280,12 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     applyCameraPose();
     water.visible = false;
     shadows.visible = false;
+    life.setMirrorPass(true);
     shared.uEdge.value = 0;
     renderer.setRenderTarget(reflectionTarget);
     renderer.render(scene, mirrorCamera);
 
+    life.setMirrorPass(false);
     water.visible = true;
     shadows.visible = true;
     shared.uEdge.value = 1;
@@ -291,6 +308,7 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     if (slowFrames >= 1 && quality < QUALITY_LEVELS.length - 1) {
       quality++;
       slowFrames = 0;
+      life.setCoarseFur(true);
       resize();
     }
   }
@@ -313,35 +331,50 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
 
     const thrust = (keys.forward ? 1 : 0) - (keys.back ? 1 : 0);
     const turn = (keys.left ? 1 : 0) - (keys.right ? 1 : 0);
-    boat.step(dt, { thrust, turn });
+    walker.step(dt, { thrust, turn });
 
-    const speed = boat.speed;
+    const speed = walker.speed;
     if (!reducedMotion) {
-      agitation = Math.max(agitation * Math.exp(-dt / AGITATION_DECAY), Math.min(speed / 3, 0.8));
+      agitation = Math.max(agitation * Math.exp(-dt / AGITATION_DECAY), Math.min(speed / 5, 0.45));
       if (agitation < 0.004) agitation = 0;
       wakeBuildUp += speed * dt;
       if (wakeBuildUp > WAKE_SPACING) {
         wakeBuildUp = 0;
-        const aheadX = -Math.sin(boat.yaw);
-        const aheadZ = -Math.cos(boat.yaw);
-        const across = (Math.random() - 0.5) * 2.4;
-        addRipple(boat.x + aheadX * 1.6 - aheadZ * across, boat.z + aheadZ * 1.6 + aheadX * across, 0.5);
+        const aheadX = -Math.sin(walker.yaw);
+        const aheadZ = -Math.cos(walker.yaw);
+        // Each step sends a ring out from beside the boards.
+        const across = (Math.random() > 0.5 ? 1 : -1) * (1 + Math.random() * 0.6);
+        addRipple(walker.x + aheadX * 1.8 - aheadZ * across, walker.z + aheadZ * 1.8 + aheadX * across, 0.32);
       }
     }
+    life.update(dt, walker);
     water.material.uniforms.uAgitation.value = agitation;
     water.material.uniforms.uTime.value = clock;
 
     draw();
     needsFrame = false;
-    const room = plan.roomAt(boat.x, boat.z);
+    const room = plan.roomAt(walker.x, walker.z);
     textures.update(cameraPosition, frustum, (item) => plan.areNeighbours(room, item.room), speed < 0.15, dt);
     reportCurrent();
-    if (boat.speed > 0.02 || thrust !== 0 || turn !== 0) watchFrameRate(dt);
+    if (walker.speed > 0.02 || thrust !== 0 || turn !== 0 || life.busy) watchFrameRate(dt);
 
     const busy =
-      boat.moving || agitation > 0 || ripplesAlive() || textures.busy || thrust !== 0 || turn !== 0 || dragging;
+      walker.moving || agitation > 0 || ripplesAlive() || textures.busy || life.busy || thrust !== 0 || turn !== 0 || dragging;
     if (busy || needsFrame) schedule();
     else lastTime = 0;
+  }
+
+  /** Now and then something happens in the room, and only then is it drawn. Long idle stops even this. */
+  function scheduleLife(delay = LIFE_MIN_REST + Math.random() * LIFE_EXTRA_REST) {
+    lifeTimer = window.setTimeout(() => {
+      const watched = !covered && !offscreen && !document.hidden;
+      const recentlyActive = performance.now() - lastInteraction < LIFE_IDLE_LIMIT;
+      if (watched && recentlyActive && quality < QUALITY_LEVELS.length - 1 && !life.busy) {
+        life.startEpisode(walker, camera);
+        requestFrame();
+      }
+      scheduleLife();
+    }, delay);
   }
 
   function noteFirstMove() {
@@ -372,11 +405,11 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
   }
 
   function clearLineOfSight(x: number, z: number) {
-    const dx = x - boat.x;
-    const dz = z - boat.z;
+    const dx = x - walker.x;
+    const dz = z - walker.z;
     const distance = Math.hypot(dx, dz);
     for (let t = 0.2; t < distance - 0.15; t += 0.2) {
-      if (!plan.contains(boat.x + (dx / distance) * t, boat.z + (dz / distance) * t)) return false;
+      if (!plan.contains(walker.x + (dx / distance) * t, walker.z + (dz / distance) * t)) return false;
     }
     return true;
   }
@@ -413,6 +446,7 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
 
   function onPointerDown(event: PointerEvent) {
     if (event.button !== 0) return;
+    lastInteraction = performance.now();
     host.focus({ preventScroll: true });
     pointerDown = true;
     dragging = false;
@@ -420,8 +454,8 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     pointerStartY = pointerLastY = event.clientY;
     pointerLastTime = event.timeStamp;
     canvas.setPointerCapture(event.pointerId);
-    boat.yawDrift = 0;
-    boat.pitchDrift = 0;
+    walker.yawDrift = 0;
+    walker.pitchDrift = 0;
   }
 
   function onPointerMove(event: PointerEvent) {
@@ -445,10 +479,10 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     const dx = event.clientX - pointerLastX;
     const dy = event.clientY - pointerLastY;
     const elapsed = Math.max((event.timeStamp - pointerLastTime) / 1000, 0.004);
-    boat.look(dx * perPixel, dy * perPixel);
+    walker.look(dx * perPixel, dy * perPixel);
     if (!reducedMotion) {
-      boat.yawDrift = boat.yawDrift * 0.6 + ((dx * perPixel) / elapsed) * 0.4;
-      boat.pitchDrift = boat.pitchDrift * 0.6 + ((dy * perPixel) / elapsed) * 0.4;
+      walker.yawDrift = walker.yawDrift * 0.6 + ((dx * perPixel) / elapsed) * 0.4;
+      walker.pitchDrift = walker.pitchDrift * 0.6 + ((dy * perPixel) / elapsed) * 0.4;
     }
     pointerLastX = event.clientX;
     pointerLastY = event.clientY;
@@ -463,8 +497,8 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     if (dragging) {
       dragging = false;
       if (event.timeStamp - pointerLastTime > 90) {
-        boat.yawDrift = 0;
-        boat.pitchDrift = 0;
+        walker.yawDrift = 0;
+        walker.pitchDrift = 0;
       }
       requestFrame();
       return;
@@ -489,23 +523,25 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     noteFirstMove();
     addRipple(spot.x, spot.z, 1);
     const target = plan.nearestClear(spot.x, spot.z);
-    if (reducedMotion) boat.placeAt(target.x, target.z, boat.yaw, boat.pitch);
-    else sailTo(target, null);
+    if (reducedMotion) walker.placeAt(target.x, target.z, walker.yaw, walker.pitch);
+    else walkTo(target, null);
     requestFrame();
   }
 
   function onWheel(event: WheelEvent) {
     if (event.ctrlKey || covered) return;
+    lastInteraction = performance.now();
     if (host.getBoundingClientRect().top < -4) return;
     event.preventDefault();
     noteFirstMove();
     const scale = event.deltaMode === 1 ? 24 : 1;
-    boat.push(-event.deltaY * scale * WHEEL_PUSH);
+    walker.push(-event.deltaY * scale * WHEEL_PUSH);
     requestFrame();
   }
 
   function onKeyDown(event: KeyboardEvent) {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
+    lastInteraction = performance.now();
     if (event.code === 'Enter' || event.code === 'Space') {
       event.preventDefault();
       if (currentIndex >= 0) options.onOpen(currentIndex);
@@ -580,22 +616,23 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
   canvas.style.cursor = 'grab';
   if (!reducedMotion) {
     const settled = openingPose(0);
-    boat.follow([{ x: boat.x, z: boat.z }, settled], settled, 2.2);
+    walker.follow([{ x: walker.x, z: walker.z }, settled], settled, 2.2);
   }
+  if (!reducedMotion) scheduleLife(LIFE_FIRST_EVENT);
   requestFrame();
   options.onReady();
 
   return {
-    sailTo(index) {
+    walkToPainting(index) {
       const pose = viewingPose(hung[index]);
       noteFirstMove();
-      if (reducedMotion) boat.placeAt(pose.x, pose.z, pose.yaw, pose.pitch);
-      else sailTo(pose, pose);
+      if (reducedMotion) walker.placeAt(pose.x, pose.z, pose.yaw, pose.pitch);
+      else walkTo(pose, pose);
       requestFrame();
     },
     placeAt(index) {
       const pose = viewingPose(hung[index]);
-      boat.placeAt(pose.x, pose.z, pose.yaw, pose.pitch);
+      walker.placeAt(pose.x, pose.z, pose.yaw, pose.pitch);
       agitation = 0;
       ripples.forEach((ripple) => ripple.setW(0));
       currentIndex = index;
@@ -642,6 +679,7 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
     },
     dispose() {
       disposed = true;
+      window.clearTimeout(lifeTimer);
       cancelAnimationFrame(frameHandle);
       resizeObserver.disconnect();
       intersectionObserver.disconnect();
@@ -663,6 +701,7 @@ export function createGalleryScene(options: SceneOptions): GalleryScene {
         if (!mesh.isMesh) return;
         mesh.geometry.dispose();
         (mesh.material as ShaderMaterial).dispose();
+        if (object instanceof InstancedMesh) object.dispose();
       });
       renderer.dispose();
       renderer.forceContextLoss();

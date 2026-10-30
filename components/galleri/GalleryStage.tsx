@@ -131,18 +131,18 @@ export default function GalleryStage({ paintings, sceneRef, onOpen }: GallerySta
 
       {ready && !hasMoved && (
         <p className="pointer-events-none absolute inset-x-4 bottom-20 mx-auto w-fit max-w-md bg-background px-4 py-2 text-center text-sm font-light tracking-wide text-gray-700">
-          Trykk på vatnet for å gli dit, også inn i neste rom. Dra for å sjå deg rundt. Trykk på eit måleri for å sjå det stort.
+          Trykk på stien eller vatnet for å gå dit, også inn i neste rom. Dra for å sjå deg rundt. Trykk på eit måleri for å sjå det stort.
           <span className="hidden md:inline"> Piltastane styrer òg.</span>
         </p>
       )}
 
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 p-3 md:p-5">
-        <div className="flex items-center" role="group" aria-label="Gli mellom måleria">
+        <div className="flex items-center" role="group" aria-label="Gå mellom måleria">
           <button
             type="button"
             aria-label="Førre måleri"
             disabled={!ready}
-            onClick={() => sceneRef.current?.sailTo((current - 1 + paintings.length) % paintings.length)}
+            onClick={() => sceneRef.current?.walkToPainting((current - 1 + paintings.length) % paintings.length)}
             className={CONTROL}
           >
             <span aria-hidden="true">←</span>
@@ -162,7 +162,7 @@ export default function GalleryStage({ paintings, sceneRef, onOpen }: GallerySta
             type="button"
             aria-label="Neste måleri"
             disabled={!ready}
-            onClick={() => sceneRef.current?.sailTo((current + 1) % paintings.length)}
+            onClick={() => sceneRef.current?.walkToPainting((current + 1) % paintings.length)}
             className={CONTROL}
           >
             <span aria-hidden="true">→</span>

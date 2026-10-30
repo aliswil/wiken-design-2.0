@@ -1,12 +1,12 @@
 import type { FloorPlan, Point } from './floorPlan';
 
-export const EYE_HEIGHT = 1.12;
+export const EYE_HEIGHT = 1.62;
 const MIN_PITCH = -0.42;
 const MAX_PITCH = 0.62;
-const CORNER_RADIUS = 1.5;
+const CORNER_RADIUS = 0.9;
 const CORNER_SAMPLES = 8;
 
-export interface BoatInput {
+export interface WalkInput {
   /** -1 to 1: backwards to forwards. */
   thrust: number;
   /** -1 to 1: right to left. */
@@ -50,8 +50,8 @@ function smoothDamp(current: number, target: number, speedOut: { value: number }
   return clampedTarget + (change + temp) * decay;
 }
 
-/** Turns waypoints into an even line, with corners rounded off so the boat swings through them. */
-function roundedPath(points: Point[]) {
+/** Turns waypoints into an even line, with corners rounded off so the visitor swings through them. */
+export function roundedPath(points: Point[]) {
   const xs: number[] = [points[0].x];
   const zs: number[] = [points[0].z];
   for (let i = 1; i < points.length - 1; i++) {
@@ -83,8 +83,8 @@ function roundedPath(points: Point[]) {
   return { xs, zs, lengths };
 }
 
-/** The visitor's position on the water, with the inertia of something that floats. */
-export class Boat {
+/** The visitor's position on the path, with a slow, unhurried glide. */
+export class Walker {
   x: number;
   z: number;
   yaw: number;
@@ -118,7 +118,7 @@ export class Boat {
     );
   }
 
-  /** Glide through waypoints. With a `face`, the boat ends up turned that way. */
+  /** Walk through waypoints. With a `face`, the visitor ends up turned that way. */
   follow(points: Point[], face: Facing | null, smoothTime = 1.05) {
     const speed = this.speed;
     this.cancelSteering();
@@ -161,7 +161,7 @@ export class Boat {
     this.pitchDrift = 0;
   }
 
-  step(dt: number, input: BoatInput) {
+  step(dt: number, input: WalkInput) {
     const beforeX = this.x;
     const beforeZ = this.z;
 
@@ -183,13 +183,11 @@ export class Boat {
     this.speed = dt > 0 ? Math.hypot(this.x - beforeX, this.z - beforeZ) / dt : 0;
   }
 
-  private stepFree(dt: number, input: BoatInput) {
+  private stepFree(dt: number, input: WalkInput) {
     this.yaw = wrapAngle(this.yaw + input.turn * 1.15 * dt);
-    const headingX = -Math.sin(this.yaw);
-    const headingZ = -Math.cos(this.yaw);
     if (input.thrust !== 0) {
-      this.vx += headingX * input.thrust * 3.4 * dt;
-      this.vz += headingZ * input.thrust * 3.4 * dt;
+      this.vx += -Math.sin(this.yaw) * input.thrust * 3.4 * dt;
+      this.vz += -Math.cos(this.yaw) * input.thrust * 3.4 * dt;
     }
     const damping = Math.exp(-dt * 1.35);
     this.vx *= damping;
@@ -200,10 +198,10 @@ export class Boat {
       return;
     }
 
-    if (input.thrust > 0) {
-      const pull = this.plan.doorPull(this.x, this.z, headingX, headingZ);
-      this.vx += pull.x * 1.6 * dt;
-      this.vz += pull.z * 1.6 * dt;
+    if (input.thrust !== 0) {
+      const pull = this.plan.pathPull(this.x, this.z, this.vx, this.vz);
+      this.vx += pull.x * 2.2 * dt;
+      this.vz += pull.z * 2.2 * dt;
     }
     this.slide(this.vx * dt, this.vz * dt);
   }
@@ -211,6 +209,11 @@ export class Boat {
   /** Moves as far as the walls allow, sliding along them rather than stopping dead. */
   private slide(stepX: number, stepZ: number) {
     const { plan } = this;
+    if (!plan.isClear(this.x, this.z)) {
+      const onPath = plan.nearestClear(this.x, this.z);
+      this.x = onPath.x;
+      this.z = onPath.z;
+    }
     const nextX = this.x + stepX;
     const nextZ = this.z + stepZ;
     if (plan.isClear(nextX, nextZ)) {
