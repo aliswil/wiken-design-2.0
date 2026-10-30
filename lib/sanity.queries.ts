@@ -71,3 +71,26 @@ export async function getAllGalleryItems(): Promise<GalleryItem[]> {
     }`
   );
 }
+
+export interface PaintingTone {
+  _id: string;
+  lqip?: string;
+  palette: (string | null)[];
+}
+
+export async function getPaintingTones(category: string): Promise<PaintingTone[]> {
+  return client.fetch(
+    `*[_type == "gallery" && category == $category] {
+      _id,
+      "lqip": drawing.asset->metadata.lqip,
+      "palette": [
+        drawing.asset->metadata.palette.dominant.background,
+        drawing.asset->metadata.palette.vibrant.background,
+        drawing.asset->metadata.palette.muted.background,
+        drawing.asset->metadata.palette.darkVibrant.background,
+        drawing.asset->metadata.palette.lightMuted.background
+      ]
+    }`,
+    { category }
+  );
+}
