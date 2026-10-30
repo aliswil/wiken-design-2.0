@@ -5,7 +5,8 @@ import PaintingList from '@/components/galleri/PaintingList';
 import { toPaintings } from '@/components/galleri/paintings';
 import { getGalleryItems, getPaintingTones } from '@/lib/sanity.queries';
 
-export const revalidate = 60;
+// New paintings show up within five minutes, with far fewer Sanity requests than a minute's refresh.
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: 'Stille vatn – galleri | Wiken Design',

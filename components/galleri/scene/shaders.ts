@@ -146,7 +146,65 @@ export const PAINTING_FRAGMENT = /* glsl */ `
   }
 `;
 
+export const FRAME_VERTEX = /* glsl */ `
+  attribute vec3 aColor;
+  attribute float aFinish;
+  varying vec3 vWorld;
+  varying vec2 vUv;
+  varying vec3 vColor;
+  varying vec3 vNormal;
+  varying float vFinish;
+  void main() {
+    vUv = uv;
+    vColor = aColor;
+    vFinish = aFinish;
+    vNormal = normalize(mat3(modelMatrix) * normal);
+    vec4 world = modelMatrix * vec4(position, 1.0);
+    vWorld = world.xyz;
+    gl_Position = projectionMatrix * viewMatrix * world;
+  }
+`;
+
+/** Floater frames in wood, old gold or paint, plus the plain canvas edge and shadow gap. */
 export const FRAME_FRAGMENT = /* glsl */ `
+  ${NOISE}
+  ${ATMOSPHERE}
+  varying vec3 vWorld;
+  varying vec2 vUv;
+  varying vec3 vColor;
+  varying vec3 vNormal;
+  varying float vFinish;
+
+  void main() {
+    vec3 color = vColor;
+    vec3 toCamera = normalize(cameraPosition - vWorld);
+    float facing = dot(normalize(vNormal), normalize(toCamera + vec3(0.0, 0.5, 0.0)));
+
+    if (vFinish < 0.5) {
+      // Wood: fine grain running along the moulding.
+      float grain = fbm(vec2(vUv.x * 5.0, vUv.y * 22.0));
+      float pores = vnoise(vec2(vUv.x * 30.0, vUv.y * 70.0));
+      color *= 0.86 + 0.26 * grain + 0.06 * (pores - 0.5);
+    } else if (vFinish < 1.5) {
+      // Old gold: worn leaf with a soft sheen, darker where it has rubbed thin.
+      float worn = fbm(vec2(vUv.x * 11.0, vUv.y * 6.0));
+      float sheen = pow(max(facing, 0.0), 6.0);
+      color *= 0.8 + 0.2 * worn + 0.42 * sheen;
+    } else if (vFinish < 2.5) {
+      // Paint: matt, with faint brush marks.
+      color *= 0.95 + 0.1 * vnoise(vec2(vUv.x * 9.0, vUv.y * 30.0));
+    }
+
+    if (vFinish < 2.5) color *= 0.76 + 0.3 * max(facing, 0.0);
+
+    float distanceToCamera = length(cameraPosition - vWorld);
+    color = mist(color, distanceToCamera, 13.0, 0.03);
+    gl_FragColor = vec4(paperBleed(color), 1.0);
+  }
+`;
+
+/** The slim oak mouldings round the doors. */
+export const DOOR_FRAME_FRAGMENT = /* glsl */ `
   ${NOISE}
   ${ATMOSPHERE}
   uniform vec3 uColor;

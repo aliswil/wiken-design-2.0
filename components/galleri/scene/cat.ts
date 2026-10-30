@@ -2,11 +2,13 @@ import {
   BufferGeometry,
   Color,
   ConeGeometry,
+  CylinderGeometry,
   Group,
   InstancedMesh,
   Mesh,
   ShaderMaterial,
   SphereGeometry,
+  TorusGeometry,
   Vector3,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -303,27 +305,81 @@ export class Cat {
   private addHead() {
     // A generous head and big eyes do most of the charm.
     this.head.position.set(0, 0.13, -0.42);
-    this.head.scale.setScalar(1.28);
+    this.head.scale.setScalar(1.24);
     this.body.add(this.head);
 
-    this.head.add(this.fur(ellipsoid(0.09, 0.08, 0.082, 0, 0.03, -0.04, 16), 0.022, GREY_ROOT, GREY_TIP, [150, 90]));
-    const cheeks = mergeGeometries([
-      ellipsoid(0.052, 0.04, 0.042, 0.062, 0.0, -0.05, 10),
-      ellipsoid(0.052, 0.04, 0.042, -0.062, 0.0, -0.05, 10),
+    // Wider than it is tall, tapering to the chin: the shape that says cat rather than teddy bear.
+    const skull = mergeGeometries([
+      ellipsoid(0.094, 0.074, 0.082, 0, 0.032, -0.04, 18),
+      ellipsoid(0.058, 0.04, 0.05, 0, -0.022, -0.075, 12),
     ]);
-    this.head.add(this.fur(cheeks, 0.05, PALE_ROOT, GREY_TIP, [80, 50]));
-    this.head.add(this.fur(ellipsoid(0.037, 0.027, 0.03, 0, 0.002, -0.112, 10), 0.008, PALE_ROOT, PALE_TIP, [40, 30]));
+    this.head.add(this.fur(skull, 0.014, GREY_ROOT, GREY_TIP, [150, 90]));
+    const ruff = mergeGeometries([
+      ellipsoid(0.044, 0.04, 0.04, 0.074, -0.002, -0.026, 10),
+      ellipsoid(0.044, 0.04, 0.04, -0.074, -0.002, -0.026, 10),
+    ]);
+    this.head.add(this.fur(ruff, 0.052, GREY_ROOT, GREY_TIP, [70, 44]));
 
-    const earShape = (side: number, radius: number, height: number, inset: number) =>
-      new ConeGeometry(radius, height, 8).rotateZ(-side * 0.16).translate(side * 0.058, 0.122, -0.03 - inset);
-    this.head.add(this.plain(mergeGeometries([earShape(1, 0.036, 0.085, 0), earShape(-1, 0.036, 0.085, 0)]), [0.34, 0.35, 0.38]));
-    this.head.add(this.plain(mergeGeometries([earShape(1, 0.022, 0.058, 0.014), earShape(-1, 0.022, 0.058, 0.014)]), [0.82, 0.62, 0.6]));
+    // Whisker pads and chin: the soft pale muzzle.
+    const pads = mergeGeometries([
+      ellipsoid(0.025, 0.02, 0.022, 0.021, -0.008, -0.113, 10),
+      ellipsoid(0.025, 0.02, 0.022, -0.021, -0.008, -0.113, 10),
+      ellipsoid(0.018, 0.013, 0.016, 0, -0.03, -0.108, 8),
+    ]);
+    this.head.add(this.fur(pads, 0.006, PALE_ROOT, PALE_TIP, [50, 40]));
 
-    const eye = (side: number) => ellipsoid(0.023, 0.025, 0.016, side * 0.039, 0.044, -0.118, 12);
-    this.head.add(this.plain(mergeGeometries([eye(1), eye(-1)]), [0.08, 0.09, 0.07]));
-    const glint = (side: number) => ellipsoid(0.0065, 0.0065, 0.004, side * 0.044, 0.053, -0.133, 6);
-    this.head.add(this.plain(mergeGeometries([glint(1), glint(-1)]), [0.96, 0.96, 0.93]));
-    this.head.add(this.plain(ellipsoid(0.012, 0.008, 0.008, 0, 0.018, -0.142, 8), [0.8, 0.52, 0.52]));
+    this.addEars();
+    this.addEyes();
+    this.addNoseAndMouth();
+    this.addWhiskers();
+  }
+
+  /** Flat, wide-based and set apart, turned a little outwards. */
+  private addEars() {
+    const ear = (side: number, radius: number, height: number, inset: number) =>
+      new ConeGeometry(radius, height, 12)
+        .scale(1, 1, 0.42)
+        .rotateZ(-side * 0.3)
+        .rotateY(side * 0.3)
+        .translate(side * 0.066, 0.122, -0.03 - inset);
+    this.head.add(this.plain(mergeGeometries([ear(1, 0.046, 0.094, 0), ear(-1, 0.046, 0.094, 0)]), [0.42, 0.43, 0.46]));
+    this.head.add(this.plain(mergeGeometries([ear(1, 0.029, 0.066, 0.018), ear(-1, 0.029, 0.066, 0.018)]), [0.86, 0.66, 0.64]));
+  }
+
+  /** Small, round and dark, with one soft glint: kind eyes rather than a hunter's. */
+  private addEyes() {
+    const eye = (side: number) => ellipsoid(0.0125, 0.0135, 0.009, side * 0.035, 0.027, -0.124, 12);
+    this.head.add(this.plain(mergeGeometries([eye(1), eye(-1)]), [0.15, 0.1, 0.08]));
+    const glint = (side: number) => ellipsoid(0.0028, 0.0028, 0.002, side * 0.035 - 0.0052, 0.0335, -0.1315, 6);
+    this.head.add(this.plain(mergeGeometries([glint(1), glint(-1)]), [0.98, 0.98, 0.95]));
+  }
+
+  /** A small triangle of a nose, above the little upside-down Y of the mouth. */
+  private addNoseAndMouth() {
+    const nose = new ConeGeometry(0.0125, 0.012, 3).rotateZ(Math.PI).scale(1, 0.85, 0.5).translate(0, 0.009, -0.136);
+    this.head.add(this.plain(nose, [0.82, 0.54, 0.54]));
+
+    const line: [number, number, number] = [0.3, 0.27, 0.27];
+    const philtrum = ellipsoid(0.0016, 0.007, 0.0016, 0, -0.003, -0.1355, 6);
+    const smile = (side: number) =>
+      new TorusGeometry(0.0095, 0.0016, 5, 10, Math.PI)
+        .rotateZ(Math.PI)
+        .translate(side * 0.0095, -0.009, -0.1345);
+    this.head.add(this.plain(mergeGeometries([philtrum, smile(1), smile(-1)]), line));
+  }
+
+  private addWhiskers() {
+    const pieces: BufferGeometry[] = [];
+    for (const side of [1, -1]) {
+      [0.2, 0, -0.2].forEach((fan, index) => {
+        const whisker = new CylinderGeometry(0.0004, 0.0012, 0.12, 4)
+          .rotateZ(side * (Math.PI / 2) + fan * side)
+          .rotateY(side * 0.2)
+          .translate(side * 0.09, -0.006 - index * 0.007, -0.105);
+        pieces.push(whisker);
+      });
+    }
+    this.head.add(this.plain(mergeGeometries(pieces), [0.95, 0.95, 0.93]));
   }
 
   private addLegs() {

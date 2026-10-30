@@ -19,6 +19,7 @@ import {
 import type { Painting, ScreenRect } from '../types';
 import { hexToRgb } from './colors';
 import { FloorPlan, type Point } from './floorPlan';
+import { buildFrames } from './frames';
 import { MAX_RIPPLES } from './shaders';
 import { RoomLife } from './life';
 import { createToneTexture, PaintingTextures } from './textures';
@@ -26,7 +27,6 @@ import { EYE_HEIGHT, Walker, yawTowards, type Facing } from './walker';
 import {
   buildDeck,
   buildDoorFrames,
-  buildFrames,
   buildShadows,
   buildWalls,
   buildWater,

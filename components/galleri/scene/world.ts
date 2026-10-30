@@ -17,11 +17,12 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { Painting } from '../types';
 import { toWallPigment, type Rgb } from './colors';
 import { DOOR_HEIGHT, DOOR_WIDTH, FloorPlan } from './floorPlan';
+import { frameFor, frameReach, type FrameStyle } from './frames';
 import {
   MAX_FISH,
   DECK_FRAGMENT,
   DECK_VERTEX,
-  FRAME_FRAGMENT,
+  DOOR_FRAME_FRAGMENT,
   MAX_RIPPLES,
   PAINTING_FRAGMENT,
   SHADOW_FRAGMENT,
@@ -36,9 +37,8 @@ const WALL_TOP = 8;
 const WALL_FOOT = -1.5;
 const HANG_HEIGHT = 0.62;
 const PAINTING_AREA = 4.3;
-const MAX_PAINTING_HEIGHT = 3.1;
+const MAX_PAINTING_HEIGHT = 2.85;
 const MAX_PAINTING_WIDTH = 2.7;
-const FRAME_WIDTH = 0.035;
 const WALL_CLEARANCE = 0.06;
 const BARE_WALL: Rgb = [0.93, 0.92, 0.88];
 const DECK_TOP = 0.2;
@@ -54,6 +54,7 @@ export interface HungPainting {
   room: number;
   width: number;
   height: number;
+  frame: FrameStyle;
   center: Vector3;
   /** Points out of the picture plane, towards the water. */
   normal: Vector3;
@@ -94,10 +95,11 @@ export function hangPaintings(
       const painting = paintings[next++];
       const { wall, along } = spots[i % spots.length];
       const { width, height } = paintingSize(painting);
+      const frame = frameFor(painting.id, painting.palette);
       const normal = new Vector3(wall.nx, 0, wall.nz);
       const center = new Vector3(
         wall.x + wall.dx * along + wall.nx * WALL_CLEARANCE,
-        HANG_HEIGHT + height / 2,
+        HANG_HEIGHT + frameReach(frame) + height / 2,
         wall.z + wall.dz * along + wall.nz * WALL_CLEARANCE,
       );
       const texture = placeholder(painting);
@@ -115,7 +117,7 @@ export function hangPaintings(
       mesh.position.copy(center);
       mesh.rotation.y = Math.atan2(normal.x, normal.z);
       mesh.updateMatrixWorld();
-      hung.push({ painting, mesh, uniforms, room, width, height, center, normal });
+      hung.push({ painting, mesh, uniforms, room, width, height, frame, center, normal });
     }
   }
   return hung;
@@ -127,21 +129,14 @@ function placedOnWall(geometry: BufferGeometry, hung: HungPainting, back: number
   return geometry.applyMatrix4(matrix);
 }
 
-export function buildFrames(hung: HungPainting[], shared: SharedUniforms) {
-  const pieces = hung.map((item) =>
-    placedOnWall(new BoxGeometry(item.width + FRAME_WIDTH * 2, item.height + FRAME_WIDTH * 2, 0.05), item, 0.027),
-  );
-  const material = new ShaderMaterial({
-    vertexShader: WORLD_VERTEX,
-    fragmentShader: FRAME_FRAGMENT,
-    uniforms: { ...shared, uColor: { value: new Color(0.17, 0.15, 0.12) } },
-  });
-  return new Mesh(mergeGeometries(pieces), material);
-}
-
 export function buildShadows(hung: HungPainting[]) {
   const pieces = hung.map((item) =>
-    placedOnWall(new PlaneGeometry(item.width + 0.55, item.height + 0.55), item, 0.05, 0.07),
+    placedOnWall(
+      new PlaneGeometry(item.width + frameReach(item.frame) * 2 + 0.5, item.height + frameReach(item.frame) * 2 + 0.5),
+      item,
+      0.05,
+      0.07,
+    ),
   );
   const material = new ShaderMaterial({
     vertexShader: WORLD_VERTEX,
@@ -325,7 +320,7 @@ export function buildDoorFrames(plan: FloorPlan, shared: SharedUniforms) {
   }
   const material = new ShaderMaterial({
     vertexShader: WORLD_VERTEX,
-    fragmentShader: FRAME_FRAGMENT,
+    fragmentShader: DOOR_FRAME_FRAGMENT,
     uniforms: { ...shared, uColor: { value: new Color(0.66, 0.5, 0.33) } },
   });
   return new Mesh(mergeGeometries(pieces), material);
