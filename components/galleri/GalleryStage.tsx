@@ -78,7 +78,7 @@ export default function GalleryStage({ paintings, sceneRef, onOpen }: GallerySta
     return (
       <section className="mx-auto max-w-[1200px] px-6 pt-8 md:px-16 md:pt-12">
         <Link href="/maleriar" className="inline-flex min-h-11 items-center text-sm font-light tracking-wide text-gray-600 hover:text-gray-900">
-          ← Maleriar
+          ← Måleri
         </Link>
         <h1 className="mt-4 text-3xl font-light tracking-wide text-gray-900">Stille vatn</h1>
         <p className="mt-3 max-w-xl font-light text-gray-600">
@@ -117,7 +117,7 @@ export default function GalleryStage({ paintings, sceneRef, onOpen }: GallerySta
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-3 md:p-5">
         <div className="pointer-events-auto bg-background px-3 py-1">
           <Link href="/maleriar" className="inline-flex min-h-11 items-center text-sm font-light tracking-wide text-gray-700 hover:text-black">
-            ← Maleriar
+            ← Måleri
           </Link>
           <h1 className="pb-2 text-xl font-light tracking-wide text-gray-900 md:text-2xl">Stille vatn</h1>
         </div>

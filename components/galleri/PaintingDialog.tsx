@@ -93,12 +93,10 @@ export default function PaintingDialog({ painting, total, originRect, returnRect
     if (event.key === 'ArrowLeft') onNavigate(-1);
   }
 
-  const title = painting?.title ?? 'Utan tittel';
-
   return (
     <dialog
       ref={dialogRef}
-      aria-labelledby="maleri-tittel"
+      aria-labelledby={painting?.title ? 'maleri-tittel' : 'maleri-nummer'}
       onCancel={(event) => {
         event.preventDefault();
         close();
@@ -118,7 +116,7 @@ export default function PaintingDialog({ painting, total, originRect, returnRect
               <SanityImage
                 key={painting.id}
                 src={painting.url}
-                alt={painting.title ? `${painting.title}, måleri ${painting.number} av ${total}` : `Måleri ${painting.number} av ${total}, utan tittel`}
+                alt={painting.title ? `${painting.title}, måleri ${painting.number} av ${total}` : `Måleri ${painting.number} av ${total}`}
                 width={painting.width}
                 height={painting.height}
                 sizes="(min-width: 768px) 75vw, 100vw"
@@ -132,22 +130,15 @@ export default function PaintingDialog({ painting, total, originRect, returnRect
           </div>
 
           <div className="flex flex-col justify-end gap-3 px-5 pb-5 md:w-72 md:shrink-0 md:px-8 md:pb-8 *:pointer-events-auto">
-            <p className="text-xs font-light tracking-wide text-gray-600">
+            <p id="maleri-nummer" className="text-xs font-light tracking-wide text-gray-600">
               Måleri {painting.number} av {total}
             </p>
-            <h2 id="maleri-tittel" className="text-xl font-light tracking-wide text-gray-900">
-              {title}
-            </h2>
+            {painting.title && (
+              <h2 id="maleri-tittel" className="text-xl font-light tracking-wide text-gray-900">
+                {painting.title}
+              </h2>
+            )}
             {painting.description && <p className="font-light leading-relaxed text-gray-700">{painting.description}</p>}
-            <div aria-hidden="true" className="mt-1 flex gap-1.5">
-              {painting.palette.map((color) => (
-                <span
-                  key={color}
-                  className="h-5 w-7"
-                  style={{ backgroundColor: color, borderRadius: '58% 42% 55% 45% / 48% 60% 40% 52%' }}
-                />
-              ))}
-            </div>
             <div className="mt-2 flex items-center gap-1">
               <button
                 type="button"

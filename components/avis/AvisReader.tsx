@@ -171,7 +171,7 @@ export default function AvisReader({ edition }: AvisReaderProps) {
   const gesture = useRef<Gesture | null>(null);
   const suppressClick = useRef(false);
   const focusLink = useRef<HTMLElement | null>(null);
-  const hoverLink = useRef<HTMLElement | null>(null);
+  const openedByPointer = useRef(false);
   const focusHeir = useRef<HTMLButtonElement | null>(null);
 
   const stops = stopCount(edition, mode);
@@ -185,7 +185,7 @@ export default function AvisReader({ edition }: AvisReaderProps) {
     const ring = ringRef.current;
     const stage = stageRef.current;
     if (!ring || !stage) return;
-    const link = focusLink.current ?? hoverLink.current;
+    const link = focusLink.current;
     if (!pressRef.current || !link || gesture.current?.dragging) {
       ring.removeAttribute('data-show');
       return;
@@ -195,7 +195,7 @@ export default function AvisReader({ edition }: AvisReaderProps) {
     ring.style.transform = `translate(${rect.left - outer.left}px, ${rect.top - outer.top}px)`;
     ring.style.width = `${rect.width}px`;
     ring.style.height = `${rect.height}px`;
-    ring.setAttribute('data-show', focusLink.current ? 'focus' : 'hover');
+    ring.setAttribute('data-show', '');
   }, []);
 
   const commitStop = useCallback(
@@ -206,8 +206,6 @@ export default function AvisReader({ edition }: AvisReaderProps) {
       if (next === 0 && active === prevRef.current) focusHeir.current = nextRef.current;
       if (next === Number(scrubRef.current?.max) && active === nextRef.current) focusHeir.current = prevRef.current;
       stopRef.current = next;
-      // The pointer may no longer be over this link once the page has turned under it.
-      hoverLink.current = null;
       setStop(next);
       setTurned(true);
     },
@@ -288,7 +286,6 @@ export default function AvisReader({ edition }: AvisReaderProps) {
       const active = document.activeElement;
       const focused = active && sheets.contains(active) ? stopOf(active, sheets, mode) : -1;
       const next = focused !== -1 ? focused : matchingStop(sheets, previous, stopRef.current, mode);
-      hoverLink.current = null;
       stopRef.current = next;
       setStop(next);
       pinToStop(next);
@@ -545,9 +542,6 @@ export default function AvisReader({ edition }: AvisReaderProps) {
       if (!active) {
         if (event.pointerType === 'mouse') {
           press.hover(event.clientX, event.clientY);
-          hoverLink.current =
-            event.target instanceof Element ? event.target.closest<HTMLElement>('a[href]') : null;
-          placeRing();
         }
         return;
       }
@@ -598,8 +592,6 @@ export default function AvisReader({ edition }: AvisReaderProps) {
       if (event.pointerType !== 'mouse') return;
       if (!gesture.current?.dragging) gesture.current = null;
       pressRef.current?.hover(null, null);
-      hoverLink.current = null;
-      placeRing();
     };
 
     const handleClickCapture = (event: MouseEvent) => {
@@ -620,6 +612,7 @@ export default function AvisReader({ edition }: AvisReaderProps) {
       if (!edition.drawings[index]) return;
       event.preventDefault();
       const image = link.querySelector('img') ?? link;
+      openedByPointer.current = event.detail !== 0;
       setCutting({ index, origin: image.getBoundingClientRect() });
     };
 
@@ -661,11 +654,17 @@ export default function AvisReader({ edition }: AvisReaderProps) {
 
   const handleCuttingClose = useCallback((index: number) => {
     // The focus handler above turns the newspaper to this link.
-    stageRef.current
-      ?.querySelector<HTMLElement>(`[data-drawing="${index}"]`)
-      ?.focus({ preventScroll: true });
+    const link = stageRef.current?.querySelector<HTMLElement>(`[data-drawing="${index}"]`);
+    link?.focus({ preventScroll: true });
+    // Focus still has to come back here for the keyboard, but a mouse user gets no frame for it.
+    if (link && openedByPointer.current) {
+      focusLink.current = null;
+      placeRing();
+      link.style.outline = 'none';
+      link.addEventListener('blur', () => link.style.removeProperty('outline'), { once: true });
+    }
     setCutting(null);
-  }, []);
+  }, [placeRing]);
 
   const current = Math.max(0, Math.min(stops - 1, stop));
   const label = mode ? stopLabel(edition, mode, current) : '';

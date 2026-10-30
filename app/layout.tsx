@@ -5,7 +5,7 @@ import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
   title: "Wiken Design",
-  description: "Portfolio for Wiken Design - Avisteikningar, Maleriar og Barnebøkar",
+  description: "Portfolio for Wiken Design - Avisteikningar, Måleri og Barnebøker",
 };
 
 export default function RootLayout({

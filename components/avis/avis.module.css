@@ -655,12 +655,7 @@
   pointer-events: none;
 }
 
-.ring[data-show='hover'] {
-  display: block;
-  border: 1px solid rgba(27, 25, 19, 0.45);
-}
-
-.ring[data-show='focus'] {
+.ring[data-show] {
   display: block;
   border: 2px solid #1b1913;
   box-shadow: 0 0 0 2px rgba(245, 243, 237, 0.9);

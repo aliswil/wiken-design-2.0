@@ -89,7 +89,6 @@ function Masthead({ count }: { count: number }) {
       <h1>Avisteikningar</h1>
       <p className={styles.dateline}>
         <span>Wiken Design</span>
-        <span>Akvarell og tusj</span>
         <span>
           {count} {count === 1 ? 'teikning' : 'teikningar'}
         </span>

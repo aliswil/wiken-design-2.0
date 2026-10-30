@@ -22,7 +22,7 @@ export default async function GalleriPage() {
     return (
       <div className="mx-auto max-w-[1200px] px-6 py-16 md:px-16">
         <Link href="/maleriar" className="inline-flex min-h-11 items-center text-sm font-light tracking-wide text-gray-600 hover:text-gray-900">
-          ← Maleriar
+          ← Måleri
         </Link>
         <h1 className="mt-4 text-3xl font-light tracking-wide text-gray-900">Stille vatn</h1>
         <p className="mt-3 font-light text-gray-600">Bilete kjem seinare.</p>
